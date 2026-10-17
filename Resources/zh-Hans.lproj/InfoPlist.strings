@@ -1,0 +1,3 @@
+"CFBundleDisplayName" = "SleepSeal";
+"NSBluetoothAlwaysUsageDescription" = "SleepSeal 需要蓝牙权限，以便在睡眠保护期间关闭蓝牙，并在你解锁本机后恢复睡前状态。";
+"NSBluetoothPeripheralUsageDescription" = "SleepSeal 需要蓝牙权限，以便在睡眠保护期间关闭蓝牙，并在你解锁本机后恢复睡前状态。";

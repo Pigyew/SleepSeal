@@ -1,0 +1,3 @@
+"CFBundleDisplayName" = "SleepSeal";
+"NSBluetoothAlwaysUsageDescription" = "SleepSeal needs Bluetooth access to turn Bluetooth off during sleep protection and restore its previous state after you unlock this Mac.";
+"NSBluetoothPeripheralUsageDescription" = "SleepSeal needs Bluetooth access to turn Bluetooth off during sleep protection and restore its previous state after you unlock this Mac.";
