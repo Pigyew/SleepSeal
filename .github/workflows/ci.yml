@@ -4,24 +4,32 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      run_gui_checks:
+        description: 'Run mock GUI checks on a logged-in, trusted sleepseal-gui runner'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
   group: checks-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 jobs:
   check:
     runs-on: macos-15
     timeout-minutes: 20
+    outputs:
+      artifact_id: ${{ steps.artifact.outputs.artifact-id }}
     env:
-      # Pin a macOS 15 SDK toolchain as well as the host OS. A future runner
-      # default must not silently turn the compatibility check into SDK 26+.
+      # Preserve the older SDK compatibility check when hosted defaults change.
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
       - name: Verify Apple silicon toolchain
         run: |
           test "$(uname -m)" = arm64
@@ -29,18 +37,18 @@ jobs:
           xcodebuild -version
           case "$(xcrun --sdk macosx --show-sdk-version)" in 15.*) ;; *) exit 1 ;; esac
           sw_vers
-      - name: Simulated tests and script checks
+      - name: Validate a prospective release tag
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python3 scripts/release-metadata.py check-tag "$RELEASE_TAG"
+      - name: Simulated tests, headless dashboard and installer fault checks
         run: bash test.sh
       - name: Build native app and narrow helper
         run: bash build.sh
       - name: Verify binaries, metadata and public source hygiene
         run: |
-          codesign --verify --strict build/SleepSeal.app
-          codesign --verify --strict build/PowerControl
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' build/SleepSeal.app/Contents/Info.plist)" = 0.2.1
-          test "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' build/SleepSeal.app/Contents/Info.plist)" = 13.0
-          lipo build/SleepSeal.app/Contents/MacOS/SleepSeal -verify_arch arm64
-          lipo build/PowerControl -verify_arch arm64
+          python3 scripts/release-metadata.py verify-build
           python3 - <<'PY'
           import pathlib, subprocess
           paths = subprocess.check_output(['git', 'ls-files', '-z']).decode().split('\0')
@@ -50,43 +58,86 @@ jobs:
               assert p.suffix not in {'.log', '.pkg', '.dmg', '.zip', '.p12', '.key'}, name
               assert p.name not in {'pending.json', 'configuration.json', 'power-preferences.json', 'runtime-status.json'}, name
           PY
-      - name: Build clean graphical installer
-        run: bash package.sh
-      - name: Inspect installer without installing it
+      - name: Build and inspect installer without installing it
         run: |
-          pkgutil --expand-full build/SleepSeal-0.2.1-Beta-AppleSilicon.pkg build/package-inspection
-          python3 - <<'PY'
-          import pathlib, xml.etree.ElementTree as ET
-          root = pathlib.Path('build/package-inspection')
-          payloads = [p for p in root.rglob('Payload') if p.is_dir()]
-          assert len(payloads) == 1, payloads
-          payload = payloads[0]
-          helper = 'Library/PrivilegedHelperTools/local.sleepseal.PowerControl'
-          app = 'Applications/SleepSeal.app'
-          parents = {'Applications', 'Library', 'Library/PrivilegedHelperTools'}
-          for path in payload.rglob('*'):
-              relative = path.relative_to(payload).as_posix()
-              assert relative in parents or relative == helper or relative == app or relative.startswith(app + '/'), relative
-              assert not path.is_symlink(), relative
-              assert path.name not in {'.DS_Store', '__MACOSX', 'pending.json', 'runtime-status.json'}, relative
-              assert path.suffix not in {'.log', '.p12', '.key'}, relative
-          assert (payload / helper).is_file()
-          assert (payload / app / 'Contents/MacOS/SleepSeal').is_file()
-          assert (payload / app / 'Contents/Resources/AppIcon.icns').read_bytes().startswith(b'icns')
-          assert list(root.rglob('preinstall')) and list(root.rglob('postinstall'))
-          info = ET.parse(next(root.rglob('PackageInfo'))).getroot()
-          assert info.get('install-location') == '/' and info.get('auth') == 'root'
-          assert not list(info.find('relocate')), 'The app must not relocate into an old user-owned bundle.'
-          print('Installer contains only the app, helper and expected graphical installation scripts.')
-          PY
-          cd build
-          shasum -a 256 -c SleepSeal-0.2.1-Beta-AppleSilicon.pkg.sha256
-      - name: Retain unsigned Beta installer for review
-        uses: actions/upload-artifact@v4
+          bash package.sh
+          package_name="$(python3 scripts/release-metadata.py name)"
+          pkgutil --expand-full "build/$package_name" build/package-inspection
+          python3 scripts/release-metadata.py inspect-installer build/package-inspection
+          python3 scripts/release-metadata.py verify-package build --commit "$GITHUB_SHA" --require-clean
+      - name: Retain the checked package, checksum and build provenance
+        id: artifact
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: SleepSeal-0.2.1-Beta-AppleSilicon
+          name: SleepSeal-checked-package
           path: |
-            build/SleepSeal-0.2.1-Beta-AppleSilicon.pkg
-            build/SleepSeal-0.2.1-Beta-AppleSilicon.pkg.sha256
+            build/SleepSeal-*.pkg
+            build/SleepSeal-*.pkg.sha256
+            build/SleepSeal-*.pkg.manifest.json
           if-no-files-found: error
           retention-days: 14
+
+  # GUI sessions are an explicit opt-in. The default CI never touches real hardware.
+  # Register an ARM64 macOS runner with this label, running as its logged-in GUI user.
+  gui:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_gui_checks
+    runs-on: [self-hosted, macOS, ARM64, sleepseal-gui]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Verify the runner owns an active graphical session
+        run: test "$(stat -f '%u' /dev/console)" = "$(id -u)"
+      - name: Build and run only mocked GUI verification
+        run: |
+          bash build.sh
+          build/SleepSeal.app/Contents/MacOS/SleepSeal --ui-self-test "$PWD/build/gui-checks"
+      - name: Retain GUI screenshots
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: SleepSeal-mock-GUI-checks
+          path: build/gui-checks
+          if-no-files-found: warn
+          retention-days: 14
+
+  release:
+    # Only an existing, version-matched v* tag can create a Beta prerelease.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Download the successful check job's immutable artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          artifact-ids: ${{ needs.check.outputs.artifact_id }}
+          path: build/checked-release
+          merge-multiple: true
+      - name: Recheck tag, commit, workflow provenance and package hashes
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 scripts/release-metadata.py check-tag "$RELEASE_TAG"
+          python3 scripts/release-metadata.py verify-package build/checked-release --commit "$GITHUB_SHA" --require-clean
+      - name: Publish the checked Beta artifact without rebuilding
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          package_name="$(python3 scripts/release-metadata.py name)"
+          test "$(gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq '.sha')" = "$GITHUB_SHA"
+          gh release create "$RELEASE_TAG" \
+            "build/checked-release/$package_name" \
+            "build/checked-release/$package_name.sha256" \
+            "build/checked-release/$package_name.manifest.json" \
+            --verify-tag --prerelease --generate-notes \
+            --title "SleepSeal $RELEASE_TAG Beta"

@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import CoreBluetooth
 
-@MainActor final class AppController: NSObject, CBCentralManagerDelegate {
+@MainActor final class AppController: NSObject, CBCentralManagerDelegate, NSWindowDelegate {
     let model: DashboardModel
     private var watcher: Watcher?
     private var listener: AgentListener?
@@ -12,6 +12,14 @@ import CoreBluetooth
     private var bluetoothRequest: CBCentralManager?
     private var quitAuthorized = false
     private var onboardingPresented = false
+    private var lastRuntimeFailure: String?
+    private var runtimeFeedbackActive = false
+    private let uninstallQueue = DispatchQueue(label: "local.sleepseal.uninstall")
+    private var uninstallTransaction: UninstallCoordinator?
+    private var uninstallCommitted = false
+    private var uninstallInProgress = false
+    private var quitInProgress = false
+    private var pendingActions = 0
     private let mock: Bool
 
     init(mock: Bool = false, language: UILanguage = .system, page: DashboardPage = .overview) {
@@ -44,11 +52,16 @@ import CoreBluetooth
             window.title = "SleepSeal"; window.contentView = content
             window.contentMinSize = NSSize(width: 800, height: 560)
             window.isReleasedWhenClosed = false
+            window.delegate = self
             window.center(); self.window = window
         }
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
+        watcher?.setDashboardVisible(true)
     }
+    func windowWillClose(_ notification: Notification) { watcher?.setDashboardVisible(false) }
+    func windowDidMiniaturize(_ notification: Notification) { watcher?.setDashboardVisible(false) }
+    func windowDidDeminiaturize(_ notification: Notification) { watcher?.setDashboardVisible(true) }
     private func makeMenu() {
         if statusItem == nil {
             statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -81,34 +94,42 @@ import CoreBluetooth
     @objc private func restore() { model.send(.restoreProtection) }
     @objc private func quit() { NSApp.terminate(nil) }
     func requestQuit() {
-        if mock || quitAuthorized { NSApp.reply(toApplicationShouldTerminate: true); NSApp.stop(nil); exit(0) }
+        if mock || quitAuthorized || uninstallCommitted { NSApp.reply(toApplicationShouldTerminate: true); NSApp.stop(nil); exit(0) }
+        if uninstallInProgress { NSApp.reply(toApplicationShouldTerminate: false); return }
+        quitInProgress = true
         guard let watcher else { quitAuthorized = true; NSApp.terminate(nil); return }
         model.isBusy = true
         watcher.recover(freeze: true) { [weak self] error in
             guard let self else { return }; self.model.isBusy = false
-            if let error { self.feedback(error); self.showDashboard(); NSApp.reply(toApplicationShouldTerminate: false) }
+            if let error { self.quitInProgress = false; self.feedback(error); self.showDashboard(); NSApp.reply(toApplicationShouldTerminate: false) }
             else { self.quitAuthorized = true; NSApp.reply(toApplicationShouldTerminate: true); NSApp.terminate(nil) }
         }
     }
     var canTerminate: Bool { quitAuthorized || mock }
     private func feedback(_ error: String? = nil, success: String = "feedback.saved") {
+        runtimeFeedbackActive = false
         model.feedbackKey = error == nil ? success : "feedback.failed"
         model.feedbackDetail = error.map { RuntimeErrorPresentation.message($0, languageCode: model.language.localeIdentifier) } ?? ""; model.feedbackIsError = error != nil
     }
     private func complete(_ error: String?, success: String = "feedback.saved") {
-        model.isBusy = false
-        if error != nil { watcher?.resumeAfterFailedControl() }
+        if pendingActions > 0 { pendingActions -= 1 }
+        guard !uninstallInProgress && !quitInProgress else { return }
+        model.isBusy = pendingActions > 0
+        if error != nil && !uninstallCommitted { watcher?.resumeAfterFailedControl() }
         feedback(error, success: success)
     }
+    private func beginAction() { pendingActions += 1; model.isBusy = true }
     private func receive(_ status: RuntimeStatus) {
         let c = status.configuration
         model.language = UILanguage(rawValue: c.language.rawValue) ?? .system
-        model.onboardingRequired = !c.onboardingCompleted
+        model.settingsReady = status.settingsReady && !uninstallCommitted
+        model.powerPreferencesReady = status.powerPreferencesReady && !uninstallCommitted
+        model.updateOnboarding(completed: c.onboardingCompleted, canConfigure: model.settingsReady)
         model.isEnabled = c.onboardingCompleted; model.isPaused = c.protectionPaused
         model.loginEnabled = c.launchAtLogin; model.guardPending = status.pending
         model.quitBlockingApps = c.quitBlockingApps
         model.serviceAvailable = status.eventsReady
-        let ready = status.eventsReady && status.helperReady && CBManager.authorization == .allowedAlways
+        let ready = model.settingsReady && status.eventsReady && status.helperReady && CBManager.authorization == .allowedAlways
         model.statusKey = status.failure != nil ? "guard.error" : status.pending ? "guard.protecting" : !c.onboardingCompleted ? "guard.setup" : c.protectionPaused ? "guard.paused" : ready ? "guard.ready" : "guard.error"
         model.detailKey = model.statusKey + ".detail"
         let policy = UITriggerPolicy(allSources: c.triggerPolicy.mode == .all,
@@ -175,7 +196,13 @@ import CoreBluetooth
             if let error = result.error { lines.append(RuntimeErrorPresentation.message(error, languageCode: model.language.localeIdentifier)) }
             model.blockerCleanupDetail = lines.joined(separator: " · ")
         } else { model.blockerCleanupDetail = "" }
-        if let error = status.failure { feedback(error) }
+        if let error = status.failure {
+            if error != lastRuntimeFailure { feedback(error); runtimeFeedbackActive = true }
+        } else if runtimeFeedbackActive {
+            model.feedbackKey = nil; model.feedbackDetail = ""; model.feedbackIsError = false
+            runtimeFeedbackActive = false
+        }
+        lastRuntimeFailure = status.failure
         if model.onboardingRequired && !onboardingPresented { onboardingPresented = true; showDashboard() }
         makeMenu()
     }
@@ -191,7 +218,15 @@ import CoreBluetooth
         if case .setQuitBlockingApps(false) = action {
             disablingQuitRequests = true; watcher?.cancelBlockingAppRequests()
         } else { disablingQuitRequests = false }
-        if model.isBusy && !disablingQuitRequests { return }
+        if uninstallInProgress || quitInProgress { return }
+        if model.isBusy && !(disablingQuitRequests && model.canCancelSleepPreparation) { return }
+        if uninstallCommitted {
+            switch action {
+            case .uninstall: runUninstallTransaction(); return
+            case .exportDiagnostics, .openHotCorners, .openBluetoothSettings: break
+            default: feedback(model.text("uninstall.cleanup.help")); return
+            }
+        }
         if watcher == nil {
             switch action {
             case .repairInstallation, .openHotCorners, .openBluetoothSettings, .exportDiagnostics, .setLanguage: break
@@ -209,34 +244,41 @@ import CoreBluetooth
             }
             watcher?.requestRefresh()
         case .enableProtection:
-            model.isBusy = true
+            beginAction()
             bluetoothRequest = CBCentralManager(delegate: self, queue: .main, options: [CBCentralManagerOptionShowPowerAlertKey: false])
             watcher?.changeConfiguration({ $0.onboardingCompleted = true; $0.protectionPaused = false }) { [weak self] error in self?.complete(error) }
         case .savePolicy(let policy):
-            model.isBusy = true
+            beginAction()
             watcher?.changeConfiguration({ config in config.triggerPolicy = TriggerPolicy(mode: policy.allSources ? .all : .custom, sources: Set(policy.sources.compactMap { ProtectionTrigger(rawValue: $0.rawValue) }), selectedCorners: policy.allConfiguredCorners ? nil : Set(policy.selectedCorners.compactMap(HotCorner.init(rawValue:)))) }) { [weak self] error in self?.complete(error) }
         case .setLanguage(let language):
             model.language = language; makeMenu()
-            watcher?.changeConfiguration({ $0.language = AppLanguage(rawValue: language.rawValue) ?? .system }) { [weak self] error in self?.complete(error) }
+            if let watcher {
+                beginAction()
+                watcher.changeConfiguration({ $0.language = AppLanguage(rawValue: language.rawValue) ?? .system }) { [weak self] error in self?.complete(error) }
+            }
         case .setLogin(let enabled):
-            model.isBusy = true
+            beginAction()
             watcher?.changeConfiguration({ config in try UserAgentInstallation.updateLogin(enabled); config.launchAtLogin = enabled }) { [weak self] error in self?.complete(error) }
         case .setQuitBlockingApps(let enabled):
             if !enabled { watcher?.cancelBlockingAppRequests() }
-            model.isBusy = true
+            beginAction()
             watcher?.changeConfiguration({ $0.quitBlockingApps = enabled }) { [weak self] error in self?.complete(error) }
         case .setPaused(let paused):
-            guard let watcher else { return }; model.isBusy = true
+            guard let watcher else { return }; beginAction()
             let save = { [weak self] in watcher.changeConfiguration({ $0.protectionPaused = paused }) { error in self?.complete(error) } }
             if paused { watcher.recover(freeze: true) { [weak self] error in if let error { self?.complete(error) } else { save() } } }
             else { save() }
         case .restoreProtection:
-            model.isBusy = true; watcher?.recover { [weak self] error in self?.complete(error, success: "feedback.restored") }
+            beginAction(); watcher?.recover { [weak self] error in self?.complete(error, success: "feedback.restored") }
         case .sleepNow:
             guard model.isEnabled, let watcher else { showDashboard(); return }
-            model.isBusy = true; watcher.requestSleep { [weak self] error in self?.complete(error, success: "feedback.sleepRequested") }
+            beginAction(); model.canCancelSleepPreparation = true
+            watcher.requestSleep { [weak self] error in
+                self?.model.canCancelSleepPreparation = false
+                self?.complete(error, success: "feedback.sleepRequested")
+            }
         case .displayOff:
-            model.isBusy = true
+            beginAction()
             DispatchQueue.global().async {
                 let result = try? command("/usr/bin/pmset", ["displaysleepnow"])
                 DispatchQueue.main.async { self.complete(result?.status == 0 ? nil : "Display sleep request failed / 关屏请求失败", success: "feedback.sleepRequested") }
@@ -247,14 +289,14 @@ import CoreBluetooth
             bluetoothRequest = CBCentralManager(delegate: self, queue: .main, options: [CBCentralManagerOptionShowPowerAlertKey: false])
             NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Bluetooth")!)
         case .repairInstallation:
-            NSWorkspace.shared.open(URL(string: "https://github.com/Pigyew/SleepSeal/releases/tag/v0.2.1")!)
+            NSWorkspace.shared.open(URL(string: "https://github.com/Pigyew/SleepSeal/releases")!)
         case .applyPower(let edits):
             let values = edits.compactMap { edit -> PowerPreferenceEdit? in
                 guard let source = PowerSource(rawValue: edit.scope.commandFlag), let key = PowerSettingKey(rawValue: edit.key) else { return nil }
                 return PowerPreferenceEdit(original: PowerPreferenceValue(source: source, key: key, value: edit.original), target: edit.value)
             }
             guard values.count == edits.count else { feedback("Invalid edit / 无效更改"); return }
-            model.isBusy = true
+            beginAction()
             watcher?.applyPower(values, restore: false) { [weak self] error in
                 guard let self else { return }
                 if error == nil { self.model.powerDrafts.removeAll(); self.model.powerConflict = false; self.watcher?.requestRefresh() }
@@ -262,7 +304,7 @@ import CoreBluetooth
                 self.complete(error)
             }
         case .restorePower:
-            model.isBusy = true; watcher?.applyPower(nil, restore: true) { [weak self] error in self?.complete(error, success: "feedback.restored") }
+            beginAction(); watcher?.applyPower(nil, restore: true) { [weak self] error in self?.complete(error, success: "feedback.restored") }
         case .exportDiagnostics: exportDiagnostics()
         case .uninstall(let restorePower): uninstall(restorePower: restorePower)
         }
@@ -282,27 +324,42 @@ import CoreBluetooth
     }
     private func uninstall(restorePower: Bool) {
         guard let watcher else { feedback("Restore the recovery record before uninstalling / 请先恢复记录再卸载"); return }
-        model.isBusy = true
+        model.isBusy = true; uninstallInProgress = true
         watcher.recover(freeze: true) { [weak self] error in
             guard let self else { return }
-            if let error { self.complete(error); return }
-            let remove = {
-                DispatchQueue.global().async {
-                    do {
-                        try PrivilegedPowerTool.verifyInstallation()
-                        let result = try command("/usr/bin/sudo", ["-n", PrivilegedPowerTool.path, "uninstall"], timeout: 10)
-                        guard result.status == 0 else { throw GuardFailure(result.output) }
-                        try UserAgentInstallation.removeOwnAgentFile()
-                        // Explicitly unregister the loaded Mach service too;
-                        // another account may still use the shared application.
-                        let stopped = try command("/bin/launchctl", ["bootout", "\(UserAgentInstallation.domain)/\(AgentIdentity.label)"], timeout: 5)
-                        guard stopped.status == 0 else { throw GuardFailure("Startup service cleanup needs retry / 启动服务清理需要重试") }
-                        DispatchQueue.main.async { self.quitAuthorized = true; NSApp.terminate(nil) }
-                    } catch { DispatchQueue.main.async { self.complete(String(describing: error)) } }
-                }
-            }
-            if restorePower { watcher.applyPower(nil, restore: true) { error in if let error { self.complete(error) } else { remove() } } }
+            if let error { self.uninstallInProgress = false; self.complete(error); return }
+            let remove = { self.runUninstallTransaction() }
+            if restorePower { watcher.applyPower(nil, restore: true) { error in if let error { self.uninstallInProgress = false; self.complete(error) } else { remove() } } }
             else { remove() }
+        }
+    }
+    private func runUninstallTransaction() {
+        if uninstallTransaction == nil { uninstallTransaction = UninstallCoordinator(operations: NativeUninstallOperations()) }
+        guard let transaction = uninstallTransaction else { return }
+        model.isBusy = true; uninstallInProgress = true
+        uninstallQueue.async {
+            do {
+                let result = try transaction.uninstall()
+                DispatchQueue.main.async {
+                    self.uninstallCommitted = transaction.irreversibleCommitted
+                    self.uninstallInProgress = false
+                    switch result {
+                    case .removed:
+                        self.quitAuthorized = true; NSApp.terminate(nil)
+                    case .cleanupRequired:
+                        self.model.isBusy = false
+                        self.model.uninstallCleanupPending = true
+                        self.model.settingsReady = false; self.model.powerPreferencesReady = false
+                        self.watcher?.prepareForUninstallCleanup()
+                        self.runtimeFeedbackActive = false
+                        self.model.feedbackKey = "uninstall.cleanup.title"
+                        self.model.feedbackIsError = true
+                        self.model.feedbackDetail = self.model.text("uninstall.cleanup.help")
+                        self.model.page = .settings
+                        self.showDashboard()
+                    }
+                }
+            } catch { DispatchQueue.main.async { self.uninstallInProgress = false; self.complete(String(describing: error)) } }
         }
     }
     func capture(to directory: URL, appearance: String) throws {

@@ -7,6 +7,8 @@ private func expect(_ value: @autoclosure () -> Bool, _ message: String) throws 
 @main struct ErrorPresentationTests {
     static func main() throws {
         let cases: [(String, String, String)] = [
+            ("Saved app settings need repair; new protection is paused.", "You can still restore connections", "仍可"),
+            ("Saved power settings need repair; new protection and power edits are paused.", "saved files have been preserved", "原文件已保留"),
             ("Some apps have not quit. Handle their save prompts or cancel, then retry sleep. / 部分应用尚未退出，请处理保存提示或取消后再重试睡眠。", "Some apps have not quit", "部分应用尚未退出"),
             ("Sleep preparation cancelled / 睡眠准备已取消", "Sleep preparation was cancelled", "睡眠准备已取消"),
             ("Cannot read active power assertions / 无法读取当前电源断言 (-1)", "could not check which apps", "无法检查哪些应用"),

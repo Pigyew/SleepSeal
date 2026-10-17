@@ -7,7 +7,7 @@ func runtimeReportPath() -> String {
 }
 func writeReport(_ path: String, success: Bool, stage: String, message: String, snapshot: Snapshot? = nil, pending: PendingState? = nil, mostRecentFailure: String? = nil) throws {
     var report: [String: Any] = ["success": success, "stage": stage, "message": message,
-        "timestamp": ISO8601DateFormatter().string(from: Date()), "version": "0.2.1 Beta",
+        "timestamp": ISO8601DateFormatter().string(from: Date()), "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Development",
         "bluetoothPermission": CBManager.authorization == .allowedAlways, "waitingForUnlock": pending != nil]
     if let snapshot { report["snapshot"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(snapshot)) }
     let url = URL(fileURLWithPath: path)
@@ -77,8 +77,8 @@ func writeReport(_ path: String, success: Bool, stage: String, message: String, 
                         try store.save(AppConfiguration(existingInstallation: true))
                     }
                 }
-                let config = try store.load()
-                try UserAgentInstallation.install(executable: Bundle.main.executableURL!.path, login: config.launchAtLogin, replaceLegacy: true)
+                let login = RuntimeLaunchPolicy.loginPreference { try store.load() }
+                try UserAgentInstallation.install(executable: Bundle.main.executableURL!.path, login: login, replaceLegacy: true)
                 self.connectAfterStart(attempts: 10)
             } catch {
                 let controller = AppController(); self.controller = controller
@@ -113,7 +113,7 @@ func writeReport(_ path: String, success: Bool, stage: String, message: String, 
     @MainActor static func main() {
         guard getuid() != 0 else { fputs("Run SleepSeal as the logged-in user / 请使用普通用户运行\n", stderr); exit(1) }
         if CommandLine.arguments.contains("--doctor") {
-            do { print("SleepSeal 0.2.1 Beta — read only"); let p = try MacPowerPreferencesAdapter().read(); for v in p.values { print("\(v.id)=\(v.value)") }; return }
+            do { print("SleepSeal — read only"); let p = try MacPowerPreferencesAdapter().read(); for v in p.values { print("\(v.id)=\(v.value)") }; return }
             catch { fputs("\(error)\n", stderr); exit(1) }
         }
         NSApplication.shared.setActivationPolicy(.accessory)

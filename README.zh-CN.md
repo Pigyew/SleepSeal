@@ -2,6 +2,8 @@
 
 # SleepSeal 睡眠守护
 
+当前开发目标为 **0.2.2 Beta**，改进恢复、卸载和后台运行可靠性。新标签发布前，下方公开下载仍指向 0.2.1。参见[改进与验证说明](docs/RELIABILITY.md)。
+
 [![macOS Beta checks](https://github.com/Pigyew/SleepSeal/actions/workflows/ci.yml/badge.svg)](https://github.com/Pigyew/SleepSeal/actions/workflows/ci.yml)
 [English](README.md) · [下载 0.2.1 Beta](https://github.com/Pigyew/SleepSeal/releases/tag/v0.2.1) · [MIT 许可](LICENSE)
 

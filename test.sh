@@ -19,6 +19,10 @@ compile_test blocking-apps-adapter-tests Sources/StateMachine.swift Sources/Slee
 compile_test runtime-cycle-tests Sources/StateMachine.swift Sources/SleepTransitions.swift Sources/HotCorners.swift Sources/TriggerPolicy.swift Sources/PowerPreferences.swift Sources/ProtectionCoordinator.swift Tests/RuntimeCycleTests.swift
 compile_test error-presentation-tests Sources/ErrorPresentation.swift Tests/ErrorPresentationTests.swift
 compile_test power-preferences-tests Sources/PowerPreferences.swift Tests/PowerPreferencesTests.swift
+compile_test runtime-reliability-tests Sources/StateMachine.swift Sources/HotCorners.swift Sources/TriggerPolicy.swift Sources/SleepTransitions.swift Sources/AppConfiguration.swift Sources/PowerPreferences.swift Sources/RuntimeReliability.swift Tests/RuntimeReliabilityTests.swift
+compile_test uninstall-coordinator-tests Sources/UninstallCoordinator.swift Tests/UninstallCoordinatorTests.swift
+compile_test native-uninstall-operations-tests Sources/UninstallCoordinator.swift Sources/NativeUninstallOperations.swift Tests/NativeUninstallOperationsTests.swift
+compile_test dashboard-model-tests UI/DashboardModel.swift UI/Localization.swift Tests/DashboardModelTests.swift -framework AppKit -framework SwiftUI
 compile_test command-budget-tests -DCOMMAND_BUDGET_TESTS Sources/StateMachine.swift Sources/PowerPolicy.swift Sources/MacSystem.swift Tests/CommandBudgetTests.swift -framework AppKit -framework CoreWLAN -framework IOBluetooth -framework CoreBluetooth
 compile_test helper-policy-tests -DHELPER_POLICY_TESTING Helper/PowerControl.swift Tests/HelperPolicyTests.swift
 /usr/bin/xcrun swiftc -swift-version 5 -parse-as-library -DAGENT_IDENTITY_TESTS -module-cache-path "$PWD/build/cache" Sources/AgentIPC.swift Tests/AgentIdentityTests.swift -framework Security -o build/identity-tests
@@ -27,3 +31,5 @@ build/identity-tests
 for task_script in build.sh test.sh package.sh make-icon.sh Install.command Restore.command Uninstall.command Check.command; do /bin/bash -n "$task_script"; done
 for package_script in Packaging/Scripts/*; do /bin/sh -n "$package_script"; done
 /usr/bin/plutil -lint Resources/Info.plist Resources/en.lproj/*.strings Resources/zh-Hans.lproj/*.strings
+python3 scripts/check-localizations.py
+python3 Tests/ReleasePipelineTests.py

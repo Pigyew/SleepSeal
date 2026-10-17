@@ -218,3 +218,6 @@
 "blockers.timedOut" = "The wait ended. Apps that have not exited were left running.";
 "blockers.status.none" = "No eligible apps were found for a normal quit request.";
 "blockers.status.busy" = "Waiting for apps to respond to normal quit requests…";
+"uninstall.cleanup.help" = "SleepSeal authorization has been removed. Protection is stopped. Retry to finish login-service cleanup, or quit the app. Your recovered connections will stay available.";
+"uninstall.cleanup.retry" = "Finish uninstall cleanup";
+"uninstall.cleanup.title" = "Uninstall needs final cleanup";

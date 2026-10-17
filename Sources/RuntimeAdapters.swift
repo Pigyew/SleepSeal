@@ -45,12 +45,21 @@ enum PrivilegedPowerTool {
     }
 }
 
-struct MacPowerPreferencesAdapter: PowerPreferencesAdapter {
+/// Owned by the state queue. Capabilities change infrequently; actual settings
+/// are always read again, including every compare-and-swap and verification.
+final class MacPowerPreferencesAdapter: PowerPreferencesAdapter {
+    private var capabilities: String?
+    private var capabilitiesReadAt: TimeInterval = -.infinity
     func read() throws -> PowerPreferencesSnapshot {
         let settings = try command("/usr/bin/pmset", ["-g", "custom"])
         guard settings.status == 0 else { throw GuardFailure("Cannot read power settings / 无法读取电源设置") }
-        let capabilities = try command("/usr/bin/pmset", ["-g", "cap"])
-        return PowerPreferencesSnapshot.parse(custom: settings.output, capabilities: capabilities.output)
+        let now = ProcessInfo.processInfo.systemUptime
+        if capabilities == nil || now - capabilitiesReadAt >= 300 {
+            let result = try command("/usr/bin/pmset", ["-g", "cap"])
+            guard result.status == 0 else { throw GuardFailure("Cannot read power capabilities / 无法读取电源能力") }
+            capabilities = result.output; capabilitiesReadAt = now
+        }
+        return PowerPreferencesSnapshot.parse(custom: settings.output, capabilities: capabilities ?? "")
     }
     func write(_ value: PowerPreferenceValue, restoring: Bool) throws {
         try PrivilegedPowerTool.set(scope: value.source.rawValue, key: value.key.rawValue, value: value.value, restoring: restoring)

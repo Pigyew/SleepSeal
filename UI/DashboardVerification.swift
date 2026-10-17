@@ -17,6 +17,36 @@ enum DashboardVerification {
             checks += 1
         }
 
+        let setup = DashboardModel()
+        setup.updateOnboarding(completed: false)
+        try check(setup.onboardingRequired && !setup.isEnabled, "First setup must not enable protection before confirmation")
+        setup.deferOnboarding()
+        setup.updateOnboarding(completed: false)
+        try check(!setup.onboardingRequired, "Background refresh must not reopen deferred onboarding")
+        setup.showOnboarding()
+        try check(setup.onboardingRequired, "An explicit setup action must reopen deferred onboarding")
+        setup.updateOnboarding(completed: true)
+        try check(!setup.onboardingRequired, "Confirmed setup completion must close its sheet")
+        let recoveryOnly = DashboardModel()
+        recoveryOnly.settingsReady = false
+        recoveryOnly.updateOnboarding(completed: false, canConfigure: false)
+        recoveryOnly.showOnboarding()
+        try check(!recoveryOnly.onboardingRequired && !recoveryOnly.canUseActions,
+                  "Unreadable configuration must leave recovery available without opening setup or protected actions")
+        recoveryOnly.settingsReady = true
+        recoveryOnly.updateOnboarding(completed: false)
+        try check(recoveryOnly.onboardingRequired, "Recovery mode must not falsely mark setup completed")
+
+        let unreadyPower = DashboardModel.mock(page: .power)
+        var unreadyWrites = 0
+        unreadyPower.onAction = { if case .applyPower = $0 { unreadyWrites += 1 } }
+        unreadyPower.setDraft("60", scope: .battery, key: "sleep")
+        unreadyPower.powerPreferencesReady = false
+        unreadyPower.applyPower()
+        try check(unreadyWrites == 0 && unreadyPower.powerDirty, "Unavailable power recovery state must block writes and retain drafts")
+        try check(unreadyPower.appVersion == DashboardModel.versionLabel(infoDictionary: Bundle.main.infoDictionary),
+                  "Displayed version must match the running app bundle")
+
         let model = DashboardModel.mock()
         var actions: [DashboardAction] = []
         model.onAction = { actions.append($0) }
@@ -88,7 +118,11 @@ enum DashboardVerification {
         try check(!cleanup.quitBlockingAppsConfirmation && cleanupActions == [true, false], "Busy state must not start another opt-in operation")
         cleanup.quitBlockingApps = true
         cleanup.requestQuitBlockingApps(false)
-        try check(cleanupActions == [true, false, false] && !cleanup.quitBlockingAppsConfirmation, "Disabling an active option while busy must dispatch exactly one cancellation setting")
+        try check(cleanupActions == [true, false] && !cleanup.quitBlockingAppsConfirmation, "An unrelated busy operation must not accept another configuration change")
+        cleanup.canCancelSleepPreparation = true
+        cleanup.requestQuitBlockingApps(false)
+        try check(cleanupActions == [true, false, false] && !cleanup.quitBlockingAppsConfirmation, "An active manual sleep preparation must allow exactly one cancellation setting")
+        cleanup.canCancelSleepPreparation = false
         cleanup.quitBlockingApps = false
         cleanup.requestQuitBlockingApps(true)
         try check(cleanupActions == [true, false, false] && !cleanup.quitBlockingAppsConfirmation, "Busy state must still block enabling after a disable request")

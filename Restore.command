@@ -4,5 +4,5 @@ set -euo pipefail
 if [ -d /Applications/SleepSeal.app ]; then
   /usr/bin/open /Applications/SleepSeal.app
 else
-  /usr/bin/open 'https://github.com/Pigyew/SleepSeal/releases/tag/v0.2.1'
+  /usr/bin/open 'https://github.com/Pigyew/SleepSeal/releases'
 fi

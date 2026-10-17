@@ -1,8 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")"
-if [ -f build/SleepSeal-0.2.1-Beta-AppleSilicon.pkg ]; then
-  /usr/bin/open build/SleepSeal-0.2.1-Beta-AppleSilicon.pkg
+package_name="$(python3 scripts/release-metadata.py name)"
+if [ -f "build/$package_name" ]; then
+  /usr/bin/open "build/$package_name"
 else
-  /usr/bin/open 'https://github.com/Pigyew/SleepSeal/releases/tag/v0.2.1'
+  /usr/bin/open 'https://github.com/Pigyew/SleepSeal/releases'
 fi

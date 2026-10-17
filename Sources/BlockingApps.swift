@@ -22,6 +22,7 @@ struct BlockingAppsResult {
     var requestedCount: Int { requestedApps.count }
     var terminatedCount: Int { terminatedApps.count }
     var remainingCount: Int { remainingApps.count }
+    var canProceedWithSleep: Bool { remainingApps.isEmpty && !cancelled && !timedOut && error == nil }
 }
 
 enum BlockingQuitAttempt: Equatable {
@@ -97,6 +98,70 @@ struct BlockingAppsFailure: Error, CustomStringConvertible {
 }
 
 enum BlockingApps {
+    /// Manual sleep must account for every eligible blocker, including apps
+    /// discovered after a completed batch. All batches and the final complete
+    /// inventory share the caller's original deadline.
+    static func prepareForManualSleep(deadline: TimeInterval,
+        cancelled: @escaping () -> Bool) -> BlockingAppsResult {
+        guard !Thread.isMainThread else {
+            return BlockingAppsResult(error: "Quit preparation must run off the UI thread / 退出准备需要在后台运行")
+        }
+        return prepareForManualSleep(host: NativeBlockingAppsHost(), deadline: deadline, cancelled: cancelled)
+    }
+
+    static func prepareForManualSleep(host: BlockingAppsHost, deadline: TimeInterval,
+        cancelled: @escaping () -> Bool) -> BlockingAppsResult {
+        var result = BlockingAppsResult()
+        var candidates: [BlockingAppIdentity] = []
+        var processed: [BlockingAppIdentity] = []
+
+        func appendUnique(_ values: [BlockingAppIdentity], to identities: inout [BlockingAppIdentity]) {
+            for value in values where !identities.contains(where: { BlockingAppsPolicy.sameProcess($0, value) }) {
+                identities.append(value)
+            }
+        }
+        func finish() -> BlockingAppsResult {
+            result.candidateCount = candidates.count
+            result.terminatedApps = result.requestedApps.filter { host.presence(of: $0) == .gone }
+            // Releasing an assertion during a save prompt is not an exit.
+            result.remainingApps = candidates.filter { host.presence(of: $0) != .gone }
+            result.cancelled = result.cancelled || cancelled()
+            result.timedOut = result.timedOut || (!result.cancelled && (!deadline.isFinite || host.now() >= deadline))
+            return result
+        }
+
+        while true {
+            if cancelled() { result.cancelled = true; return finish() }
+            guard deadline.isFinite, host.now() < deadline else { result.timedOut = true; return finish() }
+            let current: BlockingAppsInventory
+            do { current = try inventory(host: host, deadline: deadline, cancelled: cancelled) }
+            catch { result.error = String(describing: error); return finish() }
+            appendUnique(current.applications, to: &candidates)
+            // inventory may have stopped partway through its PID list. Never
+            // interpret that partial or cancelled scan as clearance to sleep.
+            if cancelled() { result.cancelled = true; return finish() }
+            guard host.now() < deadline else { result.timedOut = true; return finish() }
+            guard !current.applications.isEmpty else { return finish() }
+
+            let next = Array(current.applications.filter { app in
+                !processed.contains { BlockingAppsPolicy.sameProcess($0, app) }
+            }.prefix(BlockingAppsCoordinator.maximumBatchSize))
+            // An already attempted app still blocking sleep must not receive
+            // repeated quit/save prompts during this explicit request.
+            guard !next.isEmpty else { return finish() }
+            appendUnique(next, to: &processed)
+            let batch = requestQuitBlockingApps(host: host, applications: next,
+                deadline: deadline, cancelled: cancelled)
+            appendUnique(batch.requestedApps, to: &result.requestedApps)
+            result.cancelled = batch.cancelled
+            result.timedOut = batch.timedOut
+            result.error = batch.error
+            if !batch.canProceedWithSleep { return finish() }
+            // Loop through a fresh full inventory even if the previous batch
+            // exited completely; its result only covers that batch's identities.
+        }
+    }
+
     static func inventory(deadline: TimeInterval? = nil, cancelled: () -> Bool = { false }) throws -> BlockingAppsInventory {
         try inventory(host: NativeBlockingAppsHost(), deadline: deadline, cancelled: cancelled)
     }
