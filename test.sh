@@ -13,6 +13,9 @@ compile_test transition-tests Sources/StateMachine.swift Sources/SleepTransition
 compile_test hotcorner-tests Sources/HotCorners.swift Tests/HotCornerTests.swift
 compile_test core-reliability-tests Sources/StateMachine.swift Tests/CoreReliabilityTests.swift
 compile_test trigger-tests Sources/StateMachine.swift Sources/SleepTransitions.swift Sources/HotCorners.swift Sources/TriggerPolicy.swift Sources/AppConfiguration.swift Tests/TriggerPolicyTests.swift
+compile_test blocking-apps-cancellation-tests Sources/BlockingAppsCancellation.swift Tests/BlockingAppsCancellationTests.swift
+compile_test blocking-apps-policy-tests Sources/StateMachine.swift Sources/SleepTransitions.swift Sources/HotCorners.swift Sources/TriggerPolicy.swift Sources/AppConfiguration.swift Sources/BlockingAppsPolicy.swift Tests/BlockingAppsPolicyTests.swift
+compile_test blocking-apps-adapter-tests Sources/StateMachine.swift Sources/SleepTransitions.swift Sources/HotCorners.swift Sources/TriggerPolicy.swift Sources/AppConfiguration.swift Sources/BlockingAppsPolicy.swift Sources/BlockingAppsCancellation.swift Sources/BlockingApps.swift Tests/BlockingAppsAdapterTests.swift -framework AppKit -framework IOKit
 compile_test runtime-cycle-tests Sources/StateMachine.swift Sources/SleepTransitions.swift Sources/HotCorners.swift Sources/TriggerPolicy.swift Sources/PowerPreferences.swift Sources/ProtectionCoordinator.swift Tests/RuntimeCycleTests.swift
 compile_test error-presentation-tests Sources/ErrorPresentation.swift Tests/ErrorPresentationTests.swift
 compile_test power-preferences-tests Sources/PowerPreferences.swift Tests/PowerPreferencesTests.swift
@@ -21,6 +24,6 @@ compile_test helper-policy-tests -DHELPER_POLICY_TESTING Helper/PowerControl.swi
 /usr/bin/xcrun swiftc -swift-version 5 -parse-as-library -DAGENT_IDENTITY_TESTS -module-cache-path "$PWD/build/cache" Sources/AgentIPC.swift Tests/AgentIdentityTests.swift -framework Security -o build/identity-tests
 /usr/bin/codesign --force --sign - build/identity-tests
 build/identity-tests
-for task_script in build.sh test.sh package.sh Install.command Restore.command Uninstall.command Check.command; do /bin/bash -n "$task_script"; done
+for task_script in build.sh test.sh package.sh make-icon.sh Install.command Restore.command Uninstall.command Check.command; do /bin/bash -n "$task_script"; done
 for package_script in Packaging/Scripts/*; do /bin/sh -n "$package_script"; done
 /usr/bin/plutil -lint Resources/Info.plist Resources/en.lproj/*.strings Resources/zh-Hans.lproj/*.strings

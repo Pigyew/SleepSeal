@@ -19,22 +19,24 @@ struct AppConfiguration: Codable, Equatable {
     var language: AppLanguage
     var launchAtLogin: Bool
     var protectionPaused: Bool
+    var quitBlockingApps: Bool
 
     var protectionEnabled: Bool { onboardingCompleted && !protectionPaused }
 
     init(existingInstallation: Bool = false, onboardingCompleted: Bool? = nil,
          triggerPolicy: TriggerPolicy = TriggerPolicy(), language: AppLanguage = .system,
-         launchAtLogin: Bool = true, protectionPaused: Bool = false) {
+         launchAtLogin: Bool = true, protectionPaused: Bool = false, quitBlockingApps: Bool = false) {
         schemaVersion = Self.currentSchemaVersion
         self.onboardingCompleted = onboardingCompleted ?? existingInstallation
         self.triggerPolicy = triggerPolicy
         self.language = language
         self.launchAtLogin = launchAtLogin
         self.protectionPaused = protectionPaused
+        self.quitBlockingApps = quitBlockingApps
     }
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, onboardingCompleted, triggerPolicy, language, launchAtLogin, protectionPaused
+        case schemaVersion, onboardingCompleted, triggerPolicy, language, launchAtLogin, protectionPaused, quitBlockingApps
     }
 
     init(from decoder: Decoder) throws {
@@ -45,6 +47,7 @@ struct AppConfiguration: Codable, Equatable {
         language = try values.decodeIfPresent(AppLanguage.self, forKey: .language) ?? .system
         launchAtLogin = try values.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? true
         protectionPaused = try values.decodeIfPresent(Bool.self, forKey: .protectionPaused) ?? false
+        quitBlockingApps = try values.decodeIfPresent(Bool.self, forKey: .quitBlockingApps) ?? false
     }
 }
 

@@ -7,6 +7,9 @@ private func expect(_ value: @autoclosure () -> Bool, _ message: String) throws 
 @main struct ErrorPresentationTests {
     static func main() throws {
         let cases: [(String, String, String)] = [
+            ("Some apps have not quit. Handle their save prompts or cancel, then retry sleep. / 部分应用尚未退出，请处理保存提示或取消后再重试睡眠。", "Some apps have not quit", "部分应用尚未退出"),
+            ("Sleep preparation cancelled / 睡眠准备已取消", "Sleep preparation was cancelled", "睡眠准备已取消"),
+            ("Cannot read active power assertions / 无法读取当前电源断言 (-1)", "could not check which apps", "无法检查哪些应用"),
             ("无法切换蓝牙；请检查 SleepSeal 的蓝牙权限", "Bluetooth", "蓝牙"),
             ("蓝牙控制接口不可用", "Bluetooth", "蓝牙"),
             ("sessionNotVerified", "Unlock this Mac", "解锁"),

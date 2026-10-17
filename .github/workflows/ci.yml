@@ -72,6 +72,7 @@ jobs:
               assert path.suffix not in {'.log', '.p12', '.key'}, relative
           assert (payload / helper).is_file()
           assert (payload / app / 'Contents/MacOS/SleepSeal').is_file()
+          assert (payload / app / 'Contents/Resources/AppIcon.icns').read_bytes().startswith(b'icns')
           assert list(root.rglob('preinstall')) and list(root.rglob('postinstall'))
           info = ET.parse(next(root.rglob('PackageInfo'))).getroot()
           assert info.get('install-location') == '/' and info.get('auth') == 'root'

@@ -2,6 +2,14 @@
 
 ## 0.2.1 Beta — 2026-10-17
 
+- Add an optional, default-off request to normally quit eligible sleep-blocking apps belonging to the current console user. Enabling requires a bilingual confirmation; system services are excluded, save prompts and refusals are respected, and exited apps are not automatically relaunched. No force-quit operation is offered.
+- Scope quit requests to selected sleep methods. SleepSeal's own sleep action waits up to 8 seconds and stops if blockers remain unresolved; automatic idle preparation checks the relevant configured system timer, and actual-sleep preparation is limited to 2 seconds of best effort. The panel shows requested/exited/remaining counts and cancellation or timeout status.
+- Verify process UID, start time, executable and bundle information locally before requests without saving or exporting that transient identity data. Add simulated policy/process checks and opt-in UI checks; no real apps are asked to quit in development tests.
+
+新增默认关闭的“睡眠前请求退出阻止睡眠的应用”。启用前需确认风险，仅处理当前前台账户符合条件的普通应用，排除系统服务，遵循保存提示和拒绝，不强制退出、不自动重启应用。请求遵循已选保护方式；SleepSeal 手动睡眠最多等待 8 秒，未解决则停止本次请求；闲置准备检查相关系统计时，实际睡眠准备最多 2 秒、尽力而为。面板显示请求／退出／仍运行数量和取消／超时状态。身份信息仅供本机即时验证，不保存或导出；开发验证使用模拟应用。
+
+- Add the teal moon-and-shield application icon to Finder, Spotlight, the dashboard and setup, with a standard macOS `.icns` resource.
+
 - Fix a real installation migration failure: Foundation standardizes `/private/etc` into `/etc`, which made the helper reject macOS's own alias while checking a correctly installed legacy rule. The verifier now preserves literal paths and still rejects actual symlinks, unsafe ownership and writable directories.
 - Add read-only regression checks using real macOS directory/file metadata. Upgrade keeps the user's protection policy and saved state. The 0.2.0 tag remains available as truthful release history; new installs and upgrades should use 0.2.1.
 

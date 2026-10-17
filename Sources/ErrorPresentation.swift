@@ -12,6 +12,15 @@ enum RuntimeErrorPresentation {
     }
 
     private static let rules: [Rule] = [
+        Rule(id: "blockingApps", phrases: ["some apps have not quit", "部分应用尚未退出"],
+             english: "Some apps have not quit. Handle their save prompts or cancel, then retry sleep. SleepSeal has not forced them to quit or disconnected the radios for this request.",
+             chinese: "部分应用尚未退出。请处理保存提示或取消后，再重试睡眠。SleepSeal 没有强制退出应用，也没有为此次请求关闭无线连接。"),
+        Rule(id: "blockingCancelled", phrases: ["sleep preparation cancelled", "睡眠准备已取消"],
+             english: "Sleep preparation was cancelled. Retry when you are ready to sleep.",
+             chinese: "睡眠准备已取消。准备好后可再次请求睡眠。"),
+        Rule(id: "assertionRead", phrases: ["cannot read active power assertions", "无法读取当前电源断言"],
+             english: "SleepSeal could not check which apps are preventing sleep. No further quit requests were sent. Refresh and retry.",
+             chinese: "SleepSeal 无法检查哪些应用正在阻止睡眠，已停止发送退出请求。请刷新后重试。"),
         Rule(id: "rollback", phrases: ["rollback verification failed", "could not save rollback result", "rollback:"],
              english: "Some changes could not be rolled back. Check the current values before retrying; the recovery record has been kept.",
              chinese: "部分更改未能回滚。请先检查当前实际值再重试；恢复记录已保留。"),

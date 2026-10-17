@@ -138,7 +138,7 @@
 "diagnostics.blockers" = "哪些应用正在阻止自动睡眠？";
 "diagnostics.noBlockers" = "最近一次检查未发现活动的睡眠阻止项。";
 "diagnostics.blockers.loading" = "刷新后查看当前睡眠阻止项。";
-"diagnostics.blockers.help" = "macOS 决定这些电源断言是否延迟睡眠。SleepSeal 不会关闭或强制退出应用。";
+"diagnostics.blockers.help" = "macOS 决定这些电源断言是否延迟睡眠。退出请求默认关闭，可在下方启用。SleepSeal 不会强制退出应用。";
 "diagnostics.export.help" = "导出经过隐私清理的本地排查报告。分享前请自行查看。";
 "permission.bluetooth" = "蓝牙权限";
 "permission.helper" = "电源设置工具";
@@ -205,3 +205,16 @@
 "permission.events" = "睡眠事件监测";
 "power.refresh.confirm" = "刷新系统现值并丢弃尚未应用的输入？";
 "trigger.automatic" = "自动关联识别";
+"blockers.quit.title" = "睡眠前请求退出阻止睡眠的应用";
+"blockers.quit.help" = "默认关闭。只有明确启用后，SleepSeal 才会请求这些应用退出。";
+"blockers.quit.enabled" = "已对选定的睡眠方式启用。SleepSeal 仅请求符合条件的应用正常退出，保存提示可能使应用保持打开。退出的应用需由你自行重新打开。";
+"blockers.quit.confirm.title" = "启用睡眠前请求退出应用？";
+"blockers.quit.confirm.risk" = "退出应用可能结束通话、停止下载或中断其他工作。已退出的应用不会自动重新打开。";
+"blockers.quit.confirm.behavior" = "SleepSeal 仅请求正常退出，并遵循应用的保存提示。系统服务会被排除，不会强制退出应用。";
+"blockers.quit.confirm.scope" = "此功能仅用于“保护方式”中选定的睡眠方式，可随时在“检查与恢复”中关闭。";
+"blockers.quit.confirm.enable" = "启用退出请求";
+"blockers.result" = "已请求 %d · 已退出 %d · 仍在运行 %d";
+"blockers.cancelled" = "退出请求已取消，其余应用保持运行。";
+"blockers.timedOut" = "等待已结束，尚未退出的应用保持运行。";
+"blockers.status.none" = "未找到符合正常退出请求条件的应用。";
+"blockers.status.busy" = "正在等待应用响应正常退出请求…";

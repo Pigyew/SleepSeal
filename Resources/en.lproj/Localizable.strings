@@ -138,7 +138,7 @@
 "diagnostics.blockers" = "What is preventing automatic sleep?";
 "diagnostics.noBlockers" = "No active sleep blockers were found in the latest check.";
 "diagnostics.blockers.loading" = "Refresh to read current sleep blockers.";
-"diagnostics.blockers.help" = "macOS decides whether an assertion delays sleep. SleepSeal does not close or force-quit these apps.";
+"diagnostics.blockers.help" = "macOS decides whether an assertion delays sleep. Quit requests are off by default and can be enabled below. SleepSeal never force-quits apps.";
 "diagnostics.export.help" = "Export a local, sanitized report for troubleshooting. Review it before sharing.";
 "permission.bluetooth" = "Bluetooth access";
 "permission.helper" = "Power settings tool";
@@ -205,3 +205,16 @@
 "permission.events" = "Sleep event monitoring";
 "power.refresh.confirm" = "Refresh current system values and discard unapplied inputs?";
 "trigger.automatic" = "Automatically identified";
+"blockers.quit.title" = "Request blocking apps to quit before sleep";
+"blockers.quit.help" = "Off by default. SleepSeal leaves these apps running unless you explicitly enable quit requests.";
+"blockers.quit.enabled" = "Enabled for your selected sleep methods. SleepSeal requests a normal quit from eligible apps; save prompts may keep them open. You reopen exited apps yourself.";
+"blockers.quit.confirm.title" = "Enable app quit requests before sleep?";
+"blockers.quit.confirm.risk" = "Quitting an app may end a call, stop a download, or interrupt other work. Apps that exit are not reopened automatically.";
+"blockers.quit.confirm.behavior" = "SleepSeal requests a normal quit and respects save prompts. System services are excluded. Apps are never force-quit.";
+"blockers.quit.confirm.scope" = "This applies only to sleep methods selected in Protection. You can turn it off at any time in Check & restore.";
+"blockers.quit.confirm.enable" = "Enable quit requests";
+"blockers.result" = "Requested %d · Quit %d · Still running %d";
+"blockers.cancelled" = "Quit requests were cancelled. Remaining apps were left running.";
+"blockers.timedOut" = "The wait ended. Apps that have not exited were left running.";
+"blockers.status.none" = "No eligible apps were found for a normal quit request.";
+"blockers.status.busy" = "Waiting for apps to respond to normal quit requests…";

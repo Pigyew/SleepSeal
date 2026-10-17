@@ -12,6 +12,7 @@ struct RuntimeStatus {
     var hasPowerBackup = false
     var corners: [HotCornerConfiguration] = []
     var blockers: [String] = []
+    var blockerCleanup: BlockingAppsResult?
     var helperReady = false
     var eventsReady = false
     var lastOrigin: SleepOrigin?
@@ -47,6 +48,8 @@ final class Watcher: NSObject {
     private var configuration: AppConfiguration
     private var status: RuntimeStatus
     private let coordinator = ProtectionCoordinator()
+    private let blockingCoordinator = BlockingAppsCoordinator()
+    private let blockingCancellation = BlockingAppsCancellation()
     private var migrationFinalized = false
     private var powerPort: io_connect_t = 0
     private var notificationPort: IONotificationPortRef?
@@ -111,6 +114,13 @@ final class Watcher: NSObject {
                 }
             }
             self.refresh()
+            // A blocking assertion can prevent the actual idle-sleep event.
+            // Inspect only after a fresh read of the relevant system timers.
+            if self.engine.pending == nil && !self.coordinator.isQuiescing && self.status.helperReady
+                && self.status.eventsReady && CBManager.authorization == .allowedAlways {
+                _ = self.prepareBlockingApps(origin: .idle, requiresIdleThreshold: true, budget: 2)
+                self.publish()
+            }
         }
         timer.resume(); self.timer = timer
         queue.async {
@@ -190,6 +200,13 @@ final class Watcher: NSObject {
         status.lastOrigin = decision.origin; status.lastReason = decision.policyDecision.reason; status.lastTriggerAt = Date()
         if decision.permissionsMissing { status.failure = "Protection needs Bluetooth and power-helper permission; connections kept / 保护需要蓝牙与电源工具权限，本次保持连接" }
         if decision.shouldAttemptProtection {
+            // This is already a confirmed sleep event. Normal application quit
+            // requests are best effort and share the acknowledgement deadline.
+            let available = source == .system ? max(0, 18 - (ProcessInfo.processInfo.systemUptime - now)) : 15
+            if decision.requested && available > 1 {
+                _ = prepareBlockingApps(origin: decision.origin, requiresIdleThreshold: false,
+                    selected: decision.policyDecision.shouldProtect, budget: min(2, available - 1))
+            }
             // The acknowledgement deadline begins at notification receipt, not
             // after other work has drained from the serial queue.
             let remaining = source == .system ? min(15, max(0, 18 - (ProcessInfo.processInfo.systemUptime - now))) : 15
@@ -200,6 +217,10 @@ final class Watcher: NSObject {
         publish() // No diagnostic hardware reads on the acknowledgement path.
     }
     private func wake(_ source: SleepSource) {
+        // A background/display wake must not repeatedly re-open save prompts.
+        // New user input, verified unlock or a new explicit request resets the
+        // attempt ledger; every wake still cancels work already in flight.
+        blockingCoordinator.cancelActiveBatch()
         coordinator.didWake(); classifier.didWake()
         if ConsoleSession.isConsoleOwner { perform { try transitions.wake(source, sessionVerified: ConsoleSession.verified) } }
         publish()
@@ -215,26 +236,33 @@ final class Watcher: NSObject {
             queue.async { self.classifier.cancelIdleSleepProposal() }
         case 0xe0000280:
             let eventTime = ProcessInfo.processInfo.systemUptime
+            let idle = Self.inputIdleSeconds()
             let ack = Acknowledgement(port: powerPort, argument: argument)
             DispatchQueue.global().asyncAfter(deadline: .now() + 20) { ack.finish() }
-            queue.async { defer { ack.finish() }; self.sleep(.system, at: eventTime, idleSeconds: 0) }
+            queue.async { defer { ack.finish() }; self.sleep(.system, at: eventTime, idleSeconds: idle) }
         case 0xe0000300:
+            cancelBlockingAppRequests()
             queue.async { self.wake(.system) }
         default: break
         }
     }
     @objc private func displaySlept(_ note: Notification) {
         let time = ProcessInfo.processInfo.systemUptime
-        let idle = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: UInt32.max)!)
+        let idle = Self.inputIdleSeconds()
         queue.async { self.sleep(.display, at: time, idleSeconds: idle) }
     }
-    @objc private func displayWoke(_ note: Notification) { queue.async { self.wake(.display) } }
+    @objc private func displayWoke(_ note: Notification) {
+        cancelBlockingAppRequests()
+        queue.async { self.wake(.display) }
+    }
     @objc private func locked(_ note: Notification) {
         queue.async { self.screenLockedObserved = true; self.perform { try self.engine.didLock() }; self.publish() }
     }
     @objc private func unlocked(_ note: Notification) {
+        cancelBlockingAppRequests()
         queue.async {
             self.screenLockedObserved = false
+            if ConsoleSession.verified { self.blockingCoordinator.reset(reason: .wake) }
             guard let id = self.engine.pending?.id else { return }
             self.perform { try self.engine.observedUnlock(gateID: id, sessionVerified: ConsoleSession.verified) }
             if self.engine.pending == nil { self.status.lastRecoveryAt = Date() }
@@ -255,12 +283,34 @@ final class Watcher: NSObject {
     }
     func changeConfiguration(_ update: @escaping (inout AppConfiguration) throws -> Void, completion: @escaping (String?) -> Void) {
         queue.async {
-            do { var next = self.configuration; try update(&next); try self.configurationStore.save(next); self.configuration = next; self.coordinator.configurationDidChange(paused: next.protectionPaused); self.publish(); DispatchQueue.main.async { completion(nil) } }
+            do {
+                var next = self.configuration; try update(&next); try self.configurationStore.save(next)
+                self.configuration = next; self.coordinator.configurationDidChange(paused: next.protectionPaused)
+                if !next.protectionEnabled || !next.quitBlockingApps {
+                    self.cancelBlockingAppRequests()
+                    self.blockingCoordinator.reset(reason: next.protectionPaused ? .protectionPaused : .configurationDisabled)
+                }
+                self.publish(); DispatchQueue.main.async { completion(nil) }
+            }
             catch { DispatchQueue.main.async { completion(String(describing: error)) } }
         }
     }
     func requestSleep(completion: @escaping (String?) -> Void) {
+        cancelBlockingAppRequests()
+        let tokenAtRequest = blockingCancellation.token()
         queue.async {
+            self.blockingCoordinator.reset(reason: .explicitSleep)
+            let preparation = self.prepareBlockingApps(origin: .manual, requiresIdleThreshold: false,
+                budget: 8, cancellationToken: tokenAtRequest)
+            if let result = preparation, result.remainingCount > 0 || result.cancelled || result.timedOut || result.error != nil {
+                self.publish()
+                DispatchQueue.main.async { completion("Some apps have not quit. Handle their save prompts or cancel, then retry sleep. / 部分应用尚未退出，请处理保存提示或取消后再重试睡眠。") }
+                return
+            }
+            guard !self.blockingCancellation.isCancelled(tokenAtRequest) else {
+                DispatchQueue.main.async { completion("Sleep preparation cancelled / 睡眠准备已取消") }; return
+            }
+            self.publish()
             let token = self.classifier.recordManualRequest(at: ProcessInfo.processInfo.systemUptime)
             let port = IOPMFindPowerManagement(mach_port_t(MACH_PORT_NULL))
             let result = port == 0 ? kIOReturnNotFound : IOPMSleepSystem(port)
@@ -270,7 +320,9 @@ final class Watcher: NSObject {
         }
     }
     func recover(freeze: Bool = false, completion: @escaping (String?) -> Void) {
+        cancelBlockingAppRequests()
         queue.async {
+            self.blockingCoordinator.reset(reason: .protectionPaused)
             var failure: String?
             do {
                 try self.coordinator.recover(freeze: freeze) {
@@ -279,6 +331,65 @@ final class Watcher: NSObject {
                 self.status.lastRecoveryAt = Date()
             } catch { failure = String(describing: error); self.status.failure = failure }
             self.refresh(); DispatchQueue.main.async { completion(failure) }
+        }
+    }
+    /// Invalidate queued main-thread quit work immediately, before the serial
+    /// coordinator can drain an in-progress preparation operation.
+    func cancelBlockingAppRequests() { blockingCancellation.cancel() }
+
+    private static func inputIdleSeconds() -> TimeInterval {
+        CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: UInt32.max)!)
+    }
+
+    private func prepareBlockingApps(origin: SleepOrigin, requiresIdleThreshold: Bool,
+        selected: Bool? = nil, budget: TimeInterval, cancellationToken: UInt64? = nil) -> BlockingAppsResult? {
+        guard configuration.protectionEnabled, configuration.quitBlockingApps,
+              !coordinator.isQuiescing, ConsoleSession.isConsoleOwner,
+              selected ?? configuration.triggerPolicy.decision(for: origin).shouldProtect else { return nil }
+        let token = cancellationToken ?? blockingCancellation.token()
+        let began = ProcessInfo.processInfo.systemUptime
+        let idle = Self.inputIdleSeconds(), inputAt = began - idle
+        let cancelled: () -> Bool = { [blockingCancellation] in
+            if blockingCancellation.isCancelled(token) || !ConsoleSession.isConsoleOwner { return true }
+            if requiresIdleThreshold {
+                let currentIdle = Self.inputIdleSeconds()
+                return !currentIdle.isFinite || ProcessInfo.processInfo.systemUptime - currentIdle > inputAt + 0.5
+            }
+            return false
+        }
+        guard !cancelled() else {
+            let result = BlockingAppsResult(cancelled: true); status.blockerCleanup = result; return result
+        }
+        do {
+            let inventory = try BlockingApps.inventory(deadline: began + budget, cancelled: cancelled)
+            if cancelled() {
+                let result = BlockingAppsResult(cancelled: true); status.blockerCleanup = result; return result
+            }
+            let remaining = began + budget - ProcessInfo.processInfo.systemUptime
+            guard remaining > 0 else {
+                let result = BlockingAppsResult(timedOut: true); status.blockerCleanup = result; return result
+            }
+            let source = Self.currentPowerSource()
+            guard let batch = blockingCoordinator.begin(configuration: configuration,
+                isConsoleOwner: ConsoleSession.isConsoleOwner, inputIdleSeconds: Self.inputIdleSeconds(),
+                systemSleepMinutes: status.power?.value(source: source, key: .systemSleep)?.value,
+                displaySleepMinutes: status.power?.value(source: source, key: .displaySleep)?.value,
+                assertions: inventory.assertions, applications: inventory.applications,
+                currentUID: getuid(), ownPID: getpid(), at: ProcessInfo.processInfo.systemUptime,
+                budget: remaining, origin: origin, requiresIdleThreshold: requiresIdleThreshold,
+                protectionSelected: selected) else { return nil }
+            let result = BlockingApps.requestQuitBlockingApps(applications: batch.applications,
+                deadline: batch.deadline, cancelled: cancelled, shouldRequest: { current in
+                    self.blockingCoordinator.claim(current, in: batch, current: current, at: ProcessInfo.processInfo.systemUptime)
+                })
+            blockingCoordinator.cancelActiveBatch()
+            status.blockerCleanup = result
+            log("Blocking apps requested=\(result.requestedCount), quit=\(result.terminatedCount), remaining=\(result.remainingCount), cancelled=\(result.cancelled), timedOut=\(result.timedOut)")
+            return result
+        } catch {
+            let result = BlockingAppsResult(error: String(describing: error))
+            status.blockerCleanup = result
+            return result
         }
     }
     func applyPower(_ edits: [PowerPreferenceEdit]?, restore: Bool, completion: @escaping (String?) -> Void) {

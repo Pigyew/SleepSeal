@@ -2,12 +2,14 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 mkdir -p build/cache build/SleepSeal.app/Contents/{MacOS,Resources}
+/bin/bash make-icon.sh
 /usr/bin/xcrun swiftc -swift-version 5 -O -parse-as-library -target "$(uname -m)-apple-macosx13.0" \
   -module-cache-path "$PWD/build/cache" Sources/*.swift UI/*.swift \
   -framework AppKit -framework SwiftUI -framework CoreWLAN -framework IOBluetooth \
   -framework CoreBluetooth -framework IOKit -framework Security \
   -o build/SleepSeal.app/Contents/MacOS/SleepSeal
 /bin/cp Resources/Info.plist build/SleepSeal.app/Contents/Info.plist
+/bin/cp build/AppIcon.icns build/SleepSeal.app/Contents/Resources/AppIcon.icns
 for resource in Resources/*.lproj; do /bin/cp -R "$resource" build/SleepSeal.app/Contents/Resources/; done
 /usr/bin/codesign --force --sign - build/SleepSeal.app
 /usr/bin/xcrun swiftc -swift-version 5 -O -parse-as-library -target "$(uname -m)-apple-macosx13.0" \

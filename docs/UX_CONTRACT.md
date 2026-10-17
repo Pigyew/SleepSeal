@@ -52,6 +52,8 @@ Power profiles load existing values without an initial write. Zero means Never; 
 
 Power draft state stays in the model across page changes. There is no destructive navigation prompt for a simple sidebar change because drafts remain available. A conflict banner supplies an explicit refresh/discard action. Invalid custom input remains editable with the localized correction message. macOS power assertions can defer sleep, and the blocker page explains this limitation without force-quit controls.
 
+The blocker page offers an optional “Request blocking apps to quit before sleep” setting, off by default. Switching it on presents an app-owned native sheet before a configuration action is dispatched. Cancel is the default Return action, Escape cancels, and only the separately labeled Enable quit requests button opts in. The sheet explains that normal quit requests may end calls, stop downloads or interrupt work; save prompts are respected; system services are excluded; quit applications need to be reopened by the user; and the selected protection methods limit when requests apply. The interface never offers force quit. Switching the saved setting off dispatches immediately. The toggle follows persisted controller state, so a failed save does not appear enabled. A controller-provided cleanup summary is displayed separately from the active blocker list.
+
 ## Accessibility, localization and appearance
 
 All owned labels, helper copy, menus, feedback headings and button text use English or Simplified Chinese resources selected by system/explicit language preference. Technical macOS assertion names and application names remain unmodified. System authorization is localized by macOS. Dates/times supplied by the controller use the selected locale.

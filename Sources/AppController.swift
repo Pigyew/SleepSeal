@@ -106,6 +106,7 @@ import CoreBluetooth
         model.onboardingRequired = !c.onboardingCompleted
         model.isEnabled = c.onboardingCompleted; model.isPaused = c.protectionPaused
         model.loginEnabled = c.launchAtLogin; model.guardPending = status.pending
+        model.quitBlockingApps = c.quitBlockingApps
         model.serviceAvailable = status.eventsReady
         let ready = status.eventsReady && status.helperReady && CBManager.authorization == .allowedAlways
         model.statusKey = status.failure != nil ? "guard.error" : status.pending ? "guard.protecting" : !c.onboardingCompleted ? "guard.setup" : c.protectionPaused ? "guard.paused" : ready ? "guard.ready" : "guard.error"
@@ -167,6 +168,13 @@ import CoreBluetooth
             UIPermission(id: "events", titleKey: "permission.events", detailKey: status.eventsReady ? "permission.ready" : "permission.missing", ready: status.eventsReady, action: .repairInstallation)
         ]
         model.sleepBlockers = status.blockers; model.blockersLoaded = true
+        if let result = status.blockerCleanup {
+            var lines = [String(format: model.text("blockers.result"), result.requestedCount, result.terminatedCount, result.remainingCount)]
+            if result.cancelled { lines.append(model.text("blockers.cancelled")) }
+            if result.timedOut { lines.append(model.text("blockers.timedOut")) }
+            if let error = result.error { lines.append(RuntimeErrorPresentation.message(error, languageCode: model.language.localeIdentifier)) }
+            model.blockerCleanupDetail = lines.joined(separator: " · ")
+        } else { model.blockerCleanupDetail = "" }
         if let error = status.failure { feedback(error) }
         if model.onboardingRequired && !onboardingPresented { onboardingPresented = true; showDashboard() }
         makeMenu()
@@ -177,7 +185,13 @@ import CoreBluetooth
         return [(NSEvent.ModifierFlags.control,"⌃"),(.option,"⌥"),(.shift,"⇧"),(.command,"⌘")].filter { flags.contains($0.0) }.map { $0.1 }.joined()
     }
     private func handle(_ action: DashboardAction) {
-        if model.isBusy { return }
+        // Turning off the opt-in must invalidate pending main-thread requests
+        // even while the serial coordinator is waiting for an app to quit.
+        let disablingQuitRequests: Bool
+        if case .setQuitBlockingApps(false) = action {
+            disablingQuitRequests = true; watcher?.cancelBlockingAppRequests()
+        } else { disablingQuitRequests = false }
+        if model.isBusy && !disablingQuitRequests { return }
         if watcher == nil {
             switch action {
             case .repairInstallation, .openHotCorners, .openBluetoothSettings, .exportDiagnostics, .setLanguage: break
@@ -207,6 +221,10 @@ import CoreBluetooth
         case .setLogin(let enabled):
             model.isBusy = true
             watcher?.changeConfiguration({ config in try UserAgentInstallation.updateLogin(enabled); config.launchAtLogin = enabled }) { [weak self] error in self?.complete(error) }
+        case .setQuitBlockingApps(let enabled):
+            if !enabled { watcher?.cancelBlockingAppRequests() }
+            model.isBusy = true
+            watcher?.changeConfiguration({ $0.quitBlockingApps = enabled }) { [weak self] error in self?.complete(error) }
         case .setPaused(let paused):
             guard let watcher else { return }; model.isBusy = true
             let save = { [weak self] in watcher.changeConfiguration({ $0.protectionPaused = paused }) { error in self?.complete(error) } }

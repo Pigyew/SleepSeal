@@ -1,3 +1,5 @@
+<img src="Resources/AppIcon.png" width="96" height="96" alt="SleepSeal app icon">
+
 # SleepSeal
 
 [![macOS Beta checks](https://github.com/Pigyew/SleepSeal/actions/workflows/ci.yml/badge.svg)](https://github.com/Pigyew/SleepSeal/actions/workflows/ci.yml)
@@ -72,6 +74,16 @@ macOS power assertions can postpone automatic sleep. The diagnostics page shows 
 
 Apple silicon has no verified Windows-style manual deep-hibernation timer in this project. SleepSeal does not offer a fake deep-sleep countdown or modify `hibernatemode` to claim one.
 
+## Optional app quit requests before sleep
+
+**Request blocking apps to quit before sleep** is **off by default**, including after an upgrade. Enable it in **Check & restore**, then confirm the explanation. Cancel is the confirmation's default keyboard action. Turning the setting off takes effect without another confirmation.
+
+When enabled, SleepSeal requests a **normal quit** only from eligible regular applications owned by the current console user that are blocking the relevant sleep. System services and other accounts' apps are excluded. Apps can refuse or show save prompts; SleepSeal never force-quits them, dismisses their prompts, or automatically reopens apps that exit. Quitting can end calls, stop downloads, or interrupt work, so save your work before enabling this option.
+
+Requests follow the same selected protection methods. A method excluded by Custom mode does not authorize app quit requests. For SleepSeal's own **Sleep now** action, it waits up to **8 seconds** for the requested apps; if eligible blockers remain, preparation is cancelled, or the wait expires unresolved, it does not proceed with that sleep request. Automatic idle preparation checks the relevant configured display/system idle timer; power assertions and macOS scheduling still apply, so this is not an exact countdown. At an actual selected sleep event, app preparation has at most **2 seconds** and is best effort; SleepSeal does not hold sleep indefinitely or promise that apps will exit.
+
+The diagnostics page reports how many apps received a request, exited, or remain running, along with cancellation or timeout status. Apps that exited must be reopened by you. Process identity is rechecked locally before a request; no app identity inventory is saved or added to the diagnostic export.
+
 ## Recovery, pause and uninstall
 
 Only a newly observed screen unlock followed by verification of the current, unlocked console user authorizes automatic recovery. A lit lock screen, background wake, login check or ordinary “already unlocked” poll does not. Delayed session verification is retried for the same sleep cycle; a new sleep or lock invalidates an older unlock candidate.
@@ -114,6 +126,8 @@ bash package.sh
 ```
 
 Tests use simulated device adapters; they do not turn off real radios, change system power settings, or put the test machine to sleep. Coverage includes recovery gates and retries, event overlap, all trigger combinations, corner geometry/configuration/modifiers, persistent power conflicts and rollback, and helper argument rejection. UI verification uses simulated states. Rendering and native accessibility semantics do not constitute a completed manual VoiceOver audit.
+
+App quit-request checks also use simulated processes and applications. They cover default-off migration, eligibility and identity checks, trigger scope, cancellation/refusal/timeout behavior, and the bilingual opt-in confirmation; development tests do not ask real apps to quit.
 
 CI builds on an ARM64 macOS 15 runner with the Xcode 16.4/macOS 15 SDK toolchain, checks signatures and package content, and creates an unsigned Beta installer artifact. Automated checks do not establish real-device compatibility on every OS version, external-display combination, or overnight battery behavior. The prototype's menu and lid paths were confirmed on one Apple silicon Mac; the expanded 0.2 paths need wider hardware testing.
 

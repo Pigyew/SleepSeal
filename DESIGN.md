@@ -74,7 +74,11 @@ Use a bordered-prominent button for the main action, native bordered buttons for
 
 SF Symbols are the icon family. A symbol accompanies, rather than replaces, a state label. The display corner diagram and current-state readings provide combined VoiceOver labels. Toolbars retain accessible labels when a native layout displays only the icon.
 
+The application identity uses `Resources/AppIcon.png` as its transparent 1024-pixel-square bitmap master. `make-icon.sh` creates standard native resolutions and packages `build/AppIcon.icns`; the app bundle includes that icon for Finder and the sidebar/onboarding brand image. The shared `SleepSealBrandImage` loads the bundled icon, falling back to the existing moon symbol when running an unbundled mock test. The menu bar retains a monochrome SF Symbol. Asset provenance is recorded in [docs/ASSETS.md](docs/ASSETS.md).
+
 Copy uses plain action verbs and explains the next step on failure. System blocker descriptions and exported backend details can retain macOS-provided names; application-owned headings, help, menus, errors and accessibility labels use the active app locale. No unmeasured battery or compatibility claims appear in the interface.
+
+Optional app quit requests live beside the sleep blocker list, disabled by default. Enabling presents a readable native confirmation sheet with Cancel as the default action and an explicit Enable quit requests button. Risk copy names calls, downloads, save prompts, excluded system services, and manual reopening. The existing warning semantics are used without a destructive-looking permanent toggle or a force-quit option.
 
 ## Do's and Don'ts
 

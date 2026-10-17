@@ -64,6 +64,37 @@ enum DashboardVerification {
             guard case let .savePolicy(policy) = actions.last else { throw Failure(description: "Policy action was not preserved") }
             try check(policy.sources.count == mask.nonzeroBitCount && !policy.allSources, "Custom trigger combination \(mask) was changed by the UI")
         }
+        let cleanup = DashboardModel.mock(page: .diagnostics)
+        var cleanupActions: [Bool] = []
+        cleanup.onAction = { if case .setQuitBlockingApps(let enabled) = $0 { cleanupActions.append(enabled) } }
+        try check(!cleanup.quitBlockingApps, "App quit requests must be off by default")
+        cleanup.requestQuitBlockingApps(true)
+        try check(cleanup.quitBlockingAppsConfirmation && !cleanup.quitBlockingApps && cleanupActions.isEmpty, "Enabling must ask before saving or dispatching")
+        cleanup.cancelQuitBlockingApps()
+        try check(!cleanup.quitBlockingAppsConfirmation && cleanupActions.isEmpty, "Cancel must not dispatch any quit-request setting")
+        cleanup.confirmQuitBlockingApps()
+        try check(cleanupActions.isEmpty, "Confirmation without a pending sheet must do nothing")
+        cleanup.requestQuitBlockingApps(true)
+        cleanup.confirmQuitBlockingApps()
+        try check(cleanupActions == [true] && !cleanup.quitBlockingApps, "Confirmed enable must dispatch once and wait for persisted state")
+        cleanup.confirmQuitBlockingApps()
+        try check(cleanupActions == [true], "Repeated confirmation must not dispatch twice")
+        cleanup.quitBlockingApps = true
+        cleanup.requestQuitBlockingApps(false)
+        try check(cleanupActions == [true, false] && !cleanup.quitBlockingAppsConfirmation, "Disabling must dispatch immediately without a confirmation")
+        cleanup.quitBlockingApps = false
+        cleanup.isBusy = true
+        cleanup.requestQuitBlockingApps(true)
+        try check(!cleanup.quitBlockingAppsConfirmation && cleanupActions == [true, false], "Busy state must not start another opt-in operation")
+        cleanup.quitBlockingApps = true
+        cleanup.requestQuitBlockingApps(false)
+        try check(cleanupActions == [true, false, false] && !cleanup.quitBlockingAppsConfirmation, "Disabling an active option while busy must dispatch exactly one cancellation setting")
+        cleanup.quitBlockingApps = false
+        cleanup.requestQuitBlockingApps(true)
+        try check(cleanupActions == [true, false, false] && !cleanup.quitBlockingAppsConfirmation, "Busy state must still block enabling after a disable request")
+        let cleanupMock = DashboardModel.mock()
+        cleanupMock.send(.setQuitBlockingApps(true))
+        try check(cleanupMock.quitBlockingApps, "The mock adapter must update only local opt-in state")
         var resourceKeys: Set<String>?
         for code in ["en", "zh-Hans"] {
             guard let path = Bundle.main.path(forResource: "Localizable", ofType: "strings", inDirectory: "\(code).lproj"),
@@ -149,6 +180,27 @@ enum DashboardVerification {
         unavailableView.cacheDisplay(in: unavailableView.bounds, to: unavailableBitmap)
         if let data = unavailableBitmap.representation(using: .png, properties: [:]) { try data.write(to: outputDirectory.appendingPathComponent("en-compact-permissions.png")) }
         try check(!unavailable.canUseActions, "Unavailable service must disable sleep control while keeping the dashboard usable")
+        for language in [UILanguage.english, .chinese] {
+            let confirmationModel = DashboardModel.mock(language: language, page: .diagnostics)
+            var confirmedChanges: [Bool] = []
+            confirmationModel.onAction = { if case .setQuitBlockingApps(let enabled) = $0 { confirmedChanges.append(enabled) } }
+            window.contentView = NSHostingView(rootView: DashboardView(model: confirmationModel))
+            window.setContentSize(NSSize(width: 960, height: 700))
+            window.makeKeyAndOrderFront(nil)
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.12))
+            confirmationModel.requestQuitBlockingApps(true)
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.3))
+            guard let sheetWindow = window.sheets.first, let sheetView = sheetWindow.contentView else { throw Failure(description: "Enabling quit requests must present a native confirmation sheet") }
+            sheetView.layoutSubtreeIfNeeded()
+            guard let sheetBitmap = sheetView.bitmapImageRepForCachingDisplay(in: sheetView.bounds) else { throw Failure(description: "Cannot capture quit-request confirmation") }
+            sheetView.cacheDisplay(in: sheetView.bounds, to: sheetBitmap)
+            if let data = sheetBitmap.representation(using: .png, properties: [:]) { try data.write(to: outputDirectory.appendingPathComponent("\(language.rawValue)-quit-requests-confirmation.png")) }
+            try check(confirmedChanges.isEmpty && !confirmationModel.quitBlockingApps, "Showing the native confirmation must not enable quit requests")
+            guard let returnKey = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: sheetWindow.windowNumber, context: nil, characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36) else { throw Failure(description: "Cannot create local Return-key test event") }
+            _ = sheetWindow.performKeyEquivalent(with: returnKey)
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.3))
+            try check(window.sheets.isEmpty && !confirmationModel.quitBlockingAppsConfirmation && confirmedChanges.isEmpty, "Return must default to Cancel and close the native sheet without a setting change")
+        }
         return checks
     }
 

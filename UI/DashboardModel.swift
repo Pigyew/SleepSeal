@@ -108,6 +108,7 @@ enum DashboardAction {
     case restoreProtection
     case setPaused(Bool)
     case setLogin(Bool)
+    case setQuitBlockingApps(Bool)
     case setLanguage(UILanguage)
     case openHotCorners
     case openBluetoothSettings
@@ -129,6 +130,9 @@ final class DashboardModel: ObservableObject {
     @Published var serviceAvailable = true
     @Published var guardPending = false
     @Published var loginEnabled = false
+    @Published var quitBlockingApps = false
+    @Published var quitBlockingAppsConfirmation = false
+    @Published var blockerCleanupDetail = ""
     @Published var statusKey = "guard.checking"
     @Published var detailKey = "guard.checking.detail"
     @Published var wifi: UIActualState = .unknown
@@ -161,6 +165,20 @@ final class DashboardModel: ObservableObject {
     var policyDirty: Bool { policy != savedPolicy }
     var canUseActions: Bool { serviceAvailable && !isBusy && isEnabled && !onboardingRequired }
     var powerDirty: Bool { !powerDrafts.isEmpty }
+
+    func requestQuitBlockingApps(_ enabled: Bool) {
+        if !enabled && quitBlockingApps {
+            send(.setQuitBlockingApps(false))
+        } else if enabled && !quitBlockingApps && !isBusy {
+            quitBlockingAppsConfirmation = true
+        }
+    }
+    func cancelQuitBlockingApps() { quitBlockingAppsConfirmation = false }
+    func confirmQuitBlockingApps() {
+        guard quitBlockingAppsConfirmation, !isBusy else { return }
+        quitBlockingAppsConfirmation = false
+        send(.setQuitBlockingApps(true))
+    }
 
     func draftID(_ scope: UIPowerScope, _ key: String) -> String { "\(scope.rawValue).\(key)" }
     func draft(_ scope: UIPowerScope, _ key: String) -> String {
@@ -231,6 +249,7 @@ final class DashboardModel: ObservableObject {
             case .savePolicy(let policy): model.savedPolicy = policy
             case .setPaused(let paused): model.isPaused = paused
             case .setLogin(let enabled): model.loginEnabled = enabled
+            case .setQuitBlockingApps(let enabled): model.quitBlockingApps = enabled
             case .setLanguage(let language): model.language = language
             case .enableProtection: model.onboardingRequired = false; model.isEnabled = true
             default: model.feedbackKey = "mock.action"; model.feedbackIsError = false

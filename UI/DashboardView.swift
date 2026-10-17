@@ -11,7 +11,7 @@ struct DashboardView: View {
         NavigationSplitView {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 9) {
-                    Image(systemName: "moon.circle.fill").font(.system(size: 27)).foregroundStyle(SleepSealTheme.accent)
+                    SleepSealBrandImage(size: 29)
                     Text("SleepSeal").font(.headline)
                 }.padding(18)
                 VStack(spacing: 3) {
@@ -64,6 +64,7 @@ struct DashboardView: View {
         .environment(\.locale, Locale(identifier: model.language.localeIdentifier))
         .sheet(isPresented: $model.onboardingRequired) { onboarding }
         .sheet(isPresented: $confirmUninstall) { uninstallSheet }
+        .sheet(isPresented: $model.quitBlockingAppsConfirmation) { quitBlockingAppsSheet }
         .confirmationDialog(model.text("power.restore.title"), isPresented: $confirmPowerRestore, titleVisibility: .visible) {
             Button(model.text("action.confirmRestorePower")) { model.send(.restorePower) }
             Button(model.text("action.cancel"), role: .cancel) {}
@@ -317,6 +318,15 @@ struct DashboardView: View {
                 else if model.sleepBlockers.isEmpty { Text(model.text("diagnostics.noBlockers")).foregroundStyle(.secondary) }
                 else { ForEach(Array(model.sleepBlockers.enumerated()), id: \.offset) { _, value in Text(value).font(.callout).textSelection(.enabled) } }
                 SealNote(text: model.text("diagnostics.blockers.help"))
+                Divider()
+                Toggle(model.text("blockers.quit.title"), isOn: Binding(get: { model.quitBlockingApps }, set: { model.requestQuitBlockingApps($0) }))
+                    .disabled(!model.serviceAvailable || (model.isBusy && !model.quitBlockingApps))
+                    .accessibilityHint(model.text("blockers.quit.help"))
+                Text(model.text(model.quitBlockingApps ? "blockers.quit.enabled" : "blockers.quit.help"))
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                if !model.blockerCleanupDetail.isEmpty {
+                    Text(model.blockerCleanupDetail).font(.callout).textSelection(.enabled)
+                }
             }
             HStack {
                 Button(model.text("action.export")) { model.send(.exportDiagnostics) }.disabled(model.isBusy)
@@ -355,7 +365,7 @@ struct DashboardView: View {
 
     private var onboarding: some View {
         VStack(alignment: .leading, spacing: 20) {
-            Image(systemName: "moon.circle.fill").font(.system(size: 48)).foregroundStyle(SleepSealTheme.accent).accessibilityHidden(true)
+            SleepSealBrandImage(size: 56)
             Text(model.text("onboarding.title")).font(.largeTitle.weight(.semibold))
             Text(model.text("onboarding.intro")).fixedSize(horizontal: false, vertical: true)
             Label(model.text("policy.all"), systemImage: "checkmark.shield.fill").font(.headline).foregroundStyle(SleepSealTheme.accent)
@@ -385,6 +395,50 @@ struct DashboardView: View {
                 }
             }
         }.padding(26).frame(width: 480)
+    }
+
+    private var quitBlockingAppsSheet: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Label(model.text("blockers.quit.confirm.title"), systemImage: "exclamationmark.triangle")
+                .font(.title2.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
+            Text(model.text("blockers.quit.confirm.risk")).fixedSize(horizontal: false, vertical: true)
+            Text(model.text("blockers.quit.confirm.behavior")).font(.callout).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(model.text("blockers.quit.confirm.scope")).font(.callout).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button(model.text("action.cancel")) { model.cancelQuitBlockingApps() }
+                    .buttonStyle(.bordered)
+                    .keyboardShortcut(.defaultAction)
+                Spacer()
+                Button(model.text("blockers.quit.confirm.enable")) { model.confirmQuitBlockingApps() }
+                    .buttonStyle(.bordered)
+                    .disabled(model.isBusy)
+            }
+        }
+        .padding(26).frame(width: 490)
+        .background(SleepSealTheme.background)
+        .interactiveDismissDisabled()
+        .onExitCommand { model.cancelQuitBlockingApps() }
+    }
+}
+
+private struct SleepSealBrandImage: View {
+    let size: CGFloat
+    private var bundledIcon: NSImage? {
+        guard let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns") else { return nil }
+        return NSImage(contentsOf: url)
+    }
+    var body: some View {
+        Group {
+            if let icon = bundledIcon {
+                Image(nsImage: icon).resizable().interpolation(.high).scaledToFit()
+            } else {
+                Image(systemName: "moon.circle.fill").resizable().scaledToFit().foregroundStyle(SleepSealTheme.accent)
+            }
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
     }
 }
 

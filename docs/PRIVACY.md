@@ -4,11 +4,13 @@ SleepSeal runs locally. It has no account, analytics SDK, telemetry endpoint, cl
 
 The app reads radio power state, energy settings, console lock state, lid state, configured Hot Corners, recent corner entry, input-idle duration and sleep notifications to apply your policy. Corner correlation retains only recent event context; it is not a mouse-tracking history. Sleep-blocking applications and their assertion reasons are read when diagnosing sleep behavior. The app does not need to collect browsing contents, Wi-Fi passwords, network names, or Bluetooth device addresses to implement protection.
 
+The optional app quit-request setting is off by default. When enabled, SleepSeal reads process ownership (UID), start time, executable identity and bundle information locally to verify that a candidate is the same eligible regular app owned by the current console user before requesting a normal quit. This transient identity data is not saved, logged as an app inventory, or included in diagnostic exports. System services and other users' apps are excluded. A normal quit request is an explicit local side effect of this option; save prompts and refusal remain under the application's control. SleepSeal does not force quit or automatically relaunch exited apps.
+
 ## Local files
 
 | Location | Purpose |
 |---|---|
-| `~/Library/Application Support/SleepSeal/configuration.json` | Your selected language, trigger rules, pause and startup preferences. |
+| `~/Library/Application Support/SleepSeal/configuration.json` | Your selected language, trigger rules, pause, startup preferences and optional app quit-request preference. |
 | `~/Library/Application Support/SleepSeal/pending.json` | Original radio/temporary power settings and the active recovery gate. Do not delete this while recovery is pending. |
 | `~/Library/Application Support/SleepSeal/power-preferences.json` | First original and last app-written persistent power settings; separate from the sleep snapshot. |
 | `~/Library/Logs/SleepSeal/` | Local status, errors and rotating logs; no automatic upload. |
@@ -32,6 +34,8 @@ Do not upload complete Application Support or Logs directories, original pending
 SleepSeal 在本地运行，没有账户、统计 SDK、遥测接口、云同步或远程面板。安装不会上传诊断。打开 GitHub 或 Apple 帮助链接时使用正常浏览器。
 
 应用会读取无线开关、电源设置、锁屏状态、盖子状态、触发角配置、近期进入角落的事件、输入闲置时间和睡眠通知。角落关联只保留近期判断所需信息，不保存鼠标轨迹。诊断会读取阻止睡眠的应用及其电源断言原因；保护功能不需要收集网页内容、Wi-Fi 密码、网络名称或蓝牙设备地址。
+
+可选的应用退出请求默认关闭。启用后，SleepSeal 在本机读取进程所属 UID、启动时间、可执行文件身份和应用 Bundle 信息，在请求正常退出前再次确认目标仍是当前前台账户拥有的同一普通应用。这些临时身份信息不会保存、作为应用清单写入日志或加入诊断导出。系统服务及其他用户的应用会被排除。正常退出请求是启用此选项后的本地操作；保存提示及是否拒绝仍由应用决定。SleepSeal 不会强制退出或自动重新打开已退出的应用。
 
 上表列出本地文件。用户设置与恢复记录采用私有权限；恢复未完成时不要删除 `pending.json`。持久电源原值与临时睡眠快照分别保存。日志每份最多 1 MiB，保留三份，不会自动上传。卸载在安全恢复后移除启动及安装组件，保留用户诊断／设置文件；持久系统电源值由单独的恢复选项处理。
 
