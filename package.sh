@@ -6,14 +6,14 @@ app="$PWD/build/SleepSeal.app"
 helper="$PWD/build/PowerControl"
 stage="$PWD/build/package-root"
 packages="$PWD/build/package-components"
-output="$PWD/build/SleepSeal-0.2.0-Beta-AppleSilicon.pkg"
+output="$PWD/build/SleepSeal-0.2.1-Beta-AppleSilicon.pkg"
 [ -d "$app" ] && [ -x "$helper" ] || {
   echo 'Build the app and PowerControl helper before packaging.' >&2
   exit 1
 }
 /usr/bin/codesign --verify --strict "$app"
 /usr/bin/codesign --verify --strict "$helper"
-[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = 0.2.0 ] || {
+[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = 0.2.1 ] || {
   echo 'Refusing to package an app with a different version.' >&2
   exit 1
 }
@@ -26,7 +26,7 @@ output="$PWD/build/SleepSeal-0.2.0-Beta-AppleSilicon.pkg"
 /usr/bin/pkgbuild --root "$stage" --ownership recommended \
   --component-plist "$PWD/Packaging/Components.plist" \
   --scripts "$PWD/Packaging/Scripts" --identifier org.pigyew.sleepseal \
-  --version 0.2.0 --install-location / "$packages/SleepSeal-component.pkg"
+  --version 0.2.1 --install-location / "$packages/SleepSeal-component.pkg"
 /usr/bin/productbuild --distribution "$PWD/Packaging/Distribution.xml" \
   --resources "$PWD/Packaging/Resources" --package-path "$packages" "$output"
 (cd "$PWD/build" && /usr/bin/shasum -a 256 "$(/usr/bin/basename "$output")") > "$output.sha256"

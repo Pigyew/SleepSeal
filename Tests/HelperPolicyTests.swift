@@ -53,6 +53,26 @@ private struct HelperPolicyTests {
             precondition(HelperLeasePolicy.mayUninstall(owner: owner, requester: 501) == (owner != 501))
             checks += 3
         }
+        // Exercise the same production lstat verifier as an ordinary user.
+        // No sudoers file is read, written, removed, or required by this test.
+        let legacy = try RootPathVerifier.components(of: "/private/etc/sudoers.d/sleepseal_501")
+        precondition(legacy == ["/", "private", "etc", "sudoers.d", "sleepseal_501"])
+        checks += 1
+        try RootPathVerifier.verify("/private/etc")
+        checks += 1
+        try RootPathVerifier.verify("/private/etc/hosts", requireRegularFile: true)
+        checks += 1
+        func rejectedPath(_ path: String, requireRegularFile: Bool = false) {
+            do {
+                try RootPathVerifier.verify(path, requireRegularFile: requireRegularFile)
+                preconditionFailure("Accepted an unsafe or mismatched privileged path: \(path)")
+            } catch { checks += 1 }
+        }
+        rejectedPath("/etc") // The actual system symlink must still be rejected.
+        rejectedPath("/private/etc", requireRegularFile: true)
+        rejectedPath("private/etc")
+        rejectedPath("/private/./etc")
+        rejectedPath("/private/../etc")
         print("PASS: privileged helper fixed grammar and allowlist — \(checks) checks")
     }
 }

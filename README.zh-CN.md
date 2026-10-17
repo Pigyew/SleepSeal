@@ -1,11 +1,11 @@
 # SleepSeal 睡眠守护
 
 [![macOS Beta checks](https://github.com/Pigyew/SleepSeal/actions/workflows/ci.yml/badge.svg)](https://github.com/Pigyew/SleepSeal/actions/workflows/ci.yml)
-[English](README.md) · [下载 0.2.0 Beta](https://github.com/Pigyew/SleepSeal/releases/tag/v0.2.0) · [MIT 许可](LICENSE)
+[English](README.md) · [下载 0.2.1 Beta](https://github.com/Pigyew/SleepSeal/releases/tag/v0.2.1) · [MIT 许可](LICENSE)
 
 SleepSeal 是一个本地运行的 macOS 菜单栏应用，目的是帮助排查、减少 MacBook 睡眠后异常耗电的问题。在需要保护的系统或显示器睡眠发生时，它先保存原始设置，再关闭 Wi-Fi、蓝牙，并开启设备可用的低电量模式。只有观察到真正的屏幕解锁并验证当前用户会话后，才自动恢复原来的设置。
 
-**0.2.0 是面向 Apple 芯片 Mac 的 Beta，最低部署目标为 macOS 13。** 当前使用临时签名，尚无 Developer ID 正式签名或 Apple 公证。最低部署目标不代表已经逐一验证所有系统版本；目前也没有经过实测的过夜省电数据或固定节电百分比。
+**0.2.1 是面向 Apple 芯片 Mac 的 Beta，最低部署目标为 macOS 13。** 当前使用临时签名，尚无 Developer ID 正式签名或 Apple 公证。最低部署目标不代表已经逐一验证所有系统版本；目前也没有经过实测的过夜省电数据或固定节电百分比。
 
 ![SleepSeal dashboard](docs/images/power-zh-CN.png)
 
@@ -13,7 +13,7 @@ SleepSeal 是一个本地运行的 macOS 菜单栏应用，目的是帮助排查
 
 ## 无需 Terminal 安装
 
-1. 从[发布页](https://github.com/Pigyew/SleepSeal/releases/tag/v0.2.0)下载 `SleepSeal-0.2.0-Beta-AppleSilicon.pkg` 及其校验值。
+1. 从[发布页](https://github.com/Pigyew/SleepSeal/releases/tag/v0.2.1)下载 `SleepSeal-0.2.1-Beta-AppleSilicon.pkg` 及其校验值。
 2. 双击安装包，按照 macOS 的正常安装窗口操作。安装器会请求管理员授权，用于安装权限受限的电源设置工具。
 3. 如果窗口没有自动出现，从“应用程序”打开 **SleepSeal**。按照向导允许蓝牙权限，并确认保护方式。新安装会预选“全部方式”，但在你确认前不会启用保护。
 4. 之后点击菜单栏中的 SleepSeal 图标即可重新打开面板；关闭窗口后仍会继续保护。语言可选“跟随系统／简体中文／English”。

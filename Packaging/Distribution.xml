@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="2">
-  <title>SleepSeal 0.2.0 Beta</title>
+  <title>SleepSeal 0.2.1 Beta</title>
   <organization>org.pigyew.sleepseal</organization>
   <welcome file="Welcome.html" mime-type="text/html"/>
   <license file="License.txt" mime-type="text/plain"/>
@@ -10,5 +10,5 @@
   <allowed-os-versions><os-version min="13.0"/></allowed-os-versions>
   <choices-outline><line choice="default"/></choices-outline>
   <choice id="default" visible="false" title="SleepSeal"><pkg-ref id="org.pigyew.sleepseal"/></choice>
-  <pkg-ref id="org.pigyew.sleepseal" version="0.2.0" onConclusion="none">SleepSeal-component.pkg</pkg-ref>
+  <pkg-ref id="org.pigyew.sleepseal" version="0.2.1" onConclusion="none">SleepSeal-component.pkg</pkg-ref>
 </installer-gui-script>

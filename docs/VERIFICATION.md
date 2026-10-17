@@ -1,4 +1,4 @@
-# 0.2.0 Beta verification scope
+# 0.2.1 Beta verification scope
 
 The release is an early Apple silicon Beta. A minimum deployment target of macOS 13 does not establish runtime compatibility on every supported operating-system version.
 
@@ -17,3 +17,7 @@ No fixed battery-saving percentage, overnight battery-drain improvement, firmwar
 公开前已通过完整模拟核心测试，以及整合应用中的 60 项图形界面检查；已视检 22 张中英文、浅深色和小窗口截图。辅助工具只测试固定参数及账户归属规则，未在测试中修改真实无线、电源或让电脑睡眠。
 
 安装包已构建、展开并检查文件范围、签名、版本与校验值，未自动执行安装脚本。真实安装、迁移和睡眠测试需要由用户在保存工作后操作。完整人工 VoiceOver 检查、过夜电量对照和全部系统／硬件兼容测试尚未完成。最低 macOS 13 目标不等于这些验证已经完成。
+
+The 0.2.0 graphical installation and user-domain migration were subsequently exercised on one Apple silicon Mac. That found the legacy-path cleanup defect corrected in 0.2.1. This installation observation does not establish real sleep or overnight battery behavior for the new release.
+
+0.2.0 已在一台 Apple 芯片 Mac 完成真实图形安装并接管后台，随后发现并在 0.2.1 修复旧路径清理问题。这不代表新版实际睡眠或过夜耗电已经验证。

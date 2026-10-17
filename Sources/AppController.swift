@@ -229,7 +229,7 @@ import CoreBluetooth
             bluetoothRequest = CBCentralManager(delegate: self, queue: .main, options: [CBCentralManagerOptionShowPowerAlertKey: false])
             NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Bluetooth")!)
         case .repairInstallation:
-            NSWorkspace.shared.open(URL(string: "https://github.com/Pigyew/SleepSeal/releases/tag/v0.2.0")!)
+            NSWorkspace.shared.open(URL(string: "https://github.com/Pigyew/SleepSeal/releases/tag/v0.2.1")!)
         case .applyPower(let edits):
             let values = edits.compactMap { edit -> PowerPreferenceEdit? in
                 guard let source = PowerSource(rawValue: edit.scope.commandFlag), let key = PowerSettingKey(rawValue: edit.key) else { return nil }

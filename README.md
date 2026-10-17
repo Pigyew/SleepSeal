@@ -1,11 +1,11 @@
 # SleepSeal
 
 [![macOS Beta checks](https://github.com/Pigyew/SleepSeal/actions/workflows/ci.yml/badge.svg)](https://github.com/Pigyew/SleepSeal/actions/workflows/ci.yml)
-[简体中文](README.zh-CN.md) · [Download 0.2.0 Beta](https://github.com/Pigyew/SleepSeal/releases/tag/v0.2.0) · [MIT license](LICENSE)
+[简体中文](README.zh-CN.md) · [Download 0.2.1 Beta](https://github.com/Pigyew/SleepSeal/releases/tag/v0.2.1) · [MIT license](LICENSE)
 
 SleepSeal is a local macOS menu bar app that helps investigate and reduce unusual MacBook battery drain during sleep. At a protected system or display sleep, it saves the original settings, turns off Wi-Fi and Bluetooth, and enables the available Low Power Mode. It restores the saved settings after a real screen unlock is observed and the current console session is verified.
 
-**0.2.0 is a Beta for Apple silicon Macs, with macOS 13 as the minimum deployment target.** It uses a temporary ad-hoc signature and is not Developer ID signed or notarized. A minimum target is not evidence of testing every macOS release. No overnight battery-saving claim or fixed percentage has been measured.
+**0.2.1 is a Beta for Apple silicon Macs, with macOS 13 as the minimum deployment target.** It uses a temporary ad-hoc signature and is not Developer ID signed or notarized. A minimum target is not evidence of testing every macOS release. No overnight battery-saving claim or fixed percentage has been measured.
 
 ![SleepSeal dashboard](docs/images/overview-en.png)
 
@@ -13,7 +13,7 @@ Dashboard preview using simulated device states.
 
 ## Install without Terminal
 
-1. Download `SleepSeal-0.2.0-Beta-AppleSilicon.pkg` and its checksum from the [release](https://github.com/Pigyew/SleepSeal/releases/tag/v0.2.0).
+1. Download `SleepSeal-0.2.1-Beta-AppleSilicon.pkg` and its checksum from the [release](https://github.com/Pigyew/SleepSeal/releases/tag/v0.2.1).
 2. Open the package and follow the normal macOS Installer. It requests administrator authorization to install the limited power-setting helper.
 3. Open **SleepSeal** from Applications if its window does not appear automatically. Follow the setup guide, allow Bluetooth access, and confirm the protection choices. A new installation starts with **All methods** selected but does not enable protection before confirmation.
 4. Use the SleepSeal menu bar icon to reopen the dashboard. Closing the window keeps protection running. Language options are **Follow system**, **简体中文**, and **English**.

@@ -1,5 +1,12 @@
 # Changelog / 更新记录
 
+## 0.2.1 Beta — 2026-10-17
+
+- Fix a real installation migration failure: Foundation standardizes `/private/etc` into `/etc`, which made the helper reject macOS's own alias while checking a correctly installed legacy rule. The verifier now preserves literal paths and still rejects actual symlinks, unsafe ownership and writable directories.
+- Add read-only regression checks using real macOS directory/file metadata. Upgrade keeps the user's protection policy and saved state. The 0.2.0 tag remains available as truthful release history; new installs and upgrades should use 0.2.1.
+
+修复实际安装中发现的旧权限清理失败：保留 `/private/etc` 字面路径，继续严格检查 root 所有权、权限与符号链接，并增加真实 macOS 路径的只读回归测试。保留 0.2.0 历史标签，新安装与升级请使用 0.2.1。
+
 ## 0.2.0 Beta — 2026-10-17
 
 - Native menu bar and five-page dashboard with English, Simplified Chinese and system-language choice; setup and repair remain available when protection cannot start.

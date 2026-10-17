@@ -153,7 +153,7 @@ final class DashboardModel: ObservableObject {
     @Published var permissions: [UIPermission] = []
     @Published var sleepBlockers: [String] = []
     @Published var blockersLoaded = false
-    @Published var appVersion = "0.2.0 Beta"
+    @Published var appVersion = "0.2.1 Beta"
     var onAction: ((DashboardAction) -> Void)?
 
     func text(_ key: String) -> String { L10n.text(key, language: language) }

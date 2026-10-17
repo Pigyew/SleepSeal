@@ -58,22 +58,40 @@ enum HelperLeasePolicy {
     static func mayUninstall(owner: uid_t?, requester: uid_t) -> Bool { owner != requester }
 }
 
-#if !HELPER_POLICY_TESTING
-private enum PowerControl {
-    static func verifyRootPath(_ path: String, requireRegularFile: Bool = false) throws {
-        let components = URL(fileURLWithPath: path).standardizedFileURL.pathComponents
+/// Validate the literal trusted installation path one component at a time.
+/// Standardizing a file URL can rewrite /private/etc to /etc on macOS, which
+/// would inspect the system's /etc symlink rather than the intended directory.
+/// This verifier is shared with read-only regression tests; it never writes.
+enum RootPathVerifier {
+    static func components(of path: String) throws -> [String] {
+        guard path.hasPrefix("/"), !path.split(separator: "/", omittingEmptySubsequences: false)
+            .contains(where: { $0 == "." || $0 == ".." }) else {
+            throw HelperRejection("A privileged installation path must be an absolute literal path.")
+        }
+        return URL(fileURLWithPath: path).pathComponents
+    }
+
+    static func verify(_ path: String, requireRegularFile: Bool = false) throws {
+        let components = try components(of: path)
         var current = ""
-        for component in components {
+        for (index, component) in components.enumerated() {
             current = component == "/" ? "/" : (current as NSString).appendingPathComponent(component)
             var metadata = stat()
             guard lstat(current, &metadata) == 0, metadata.st_uid == 0,
                   metadata.st_mode & 0o022 == 0, metadata.st_mode & S_IFMT != S_IFLNK else {
                 throw HelperRejection("A privileged installation path is not root-owned and protected.")
             }
-            if current == path, requireRegularFile, metadata.st_mode & S_IFMT != S_IFREG {
+            if index == components.count - 1, requireRegularFile, metadata.st_mode & S_IFMT != S_IFREG {
                 throw HelperRejection("The privileged tool is not a regular file.")
             }
         }
+    }
+}
+
+#if !HELPER_POLICY_TESTING
+private enum PowerControl {
+    static func verifyRootPath(_ path: String, requireRegularFile: Bool = false) throws {
+        try RootPathVerifier.verify(path, requireRegularFile: requireRegularFile)
     }
 
     static func caller() throws -> (uid_t, String) {

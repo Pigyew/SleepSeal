@@ -7,7 +7,7 @@ func runtimeReportPath() -> String {
 }
 func writeReport(_ path: String, success: Bool, stage: String, message: String, snapshot: Snapshot? = nil, pending: PendingState? = nil, mostRecentFailure: String? = nil) throws {
     var report: [String: Any] = ["success": success, "stage": stage, "message": message,
-        "timestamp": ISO8601DateFormatter().string(from: Date()), "version": "0.2.0 Beta",
+        "timestamp": ISO8601DateFormatter().string(from: Date()), "version": "0.2.1 Beta",
         "bluetoothPermission": CBManager.authorization == .allowedAlways, "waitingForUnlock": pending != nil]
     if let snapshot { report["snapshot"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(snapshot)) }
     let url = URL(fileURLWithPath: path)
@@ -113,7 +113,7 @@ func writeReport(_ path: String, success: Bool, stage: String, message: String, 
     @MainActor static func main() {
         guard getuid() != 0 else { fputs("Run SleepSeal as the logged-in user / 请使用普通用户运行\n", stderr); exit(1) }
         if CommandLine.arguments.contains("--doctor") {
-            do { print("SleepSeal 0.2.0 Beta — read only"); let p = try MacPowerPreferencesAdapter().read(); for v in p.values { print("\(v.id)=\(v.value)") }; return }
+            do { print("SleepSeal 0.2.1 Beta — read only"); let p = try MacPowerPreferencesAdapter().read(); for v in p.values { print("\(v.id)=\(v.value)") }; return }
             catch { fputs("\(error)\n", stderr); exit(1) }
         }
         NSApplication.shared.setActivationPolicy(.accessory)

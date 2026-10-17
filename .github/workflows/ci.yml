@@ -37,7 +37,7 @@ jobs:
         run: |
           codesign --verify --strict build/SleepSeal.app
           codesign --verify --strict build/PowerControl
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' build/SleepSeal.app/Contents/Info.plist)" = 0.2.0
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' build/SleepSeal.app/Contents/Info.plist)" = 0.2.1
           test "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' build/SleepSeal.app/Contents/Info.plist)" = 13.0
           lipo build/SleepSeal.app/Contents/MacOS/SleepSeal -verify_arch arm64
           lipo build/PowerControl -verify_arch arm64
@@ -54,7 +54,7 @@ jobs:
         run: bash package.sh
       - name: Inspect installer without installing it
         run: |
-          pkgutil --expand-full build/SleepSeal-0.2.0-Beta-AppleSilicon.pkg build/package-inspection
+          pkgutil --expand-full build/SleepSeal-0.2.1-Beta-AppleSilicon.pkg build/package-inspection
           python3 - <<'PY'
           import pathlib, xml.etree.ElementTree as ET
           root = pathlib.Path('build/package-inspection')
@@ -79,13 +79,13 @@ jobs:
           print('Installer contains only the app, helper and expected graphical installation scripts.')
           PY
           cd build
-          shasum -a 256 -c SleepSeal-0.2.0-Beta-AppleSilicon.pkg.sha256
+          shasum -a 256 -c SleepSeal-0.2.1-Beta-AppleSilicon.pkg.sha256
       - name: Retain unsigned Beta installer for review
         uses: actions/upload-artifact@v4
         with:
-          name: SleepSeal-0.2.0-Beta-AppleSilicon
+          name: SleepSeal-0.2.1-Beta-AppleSilicon
           path: |
-            build/SleepSeal-0.2.0-Beta-AppleSilicon.pkg
-            build/SleepSeal-0.2.0-Beta-AppleSilicon.pkg.sha256
+            build/SleepSeal-0.2.1-Beta-AppleSilicon.pkg
+            build/SleepSeal-0.2.1-Beta-AppleSilicon.pkg.sha256
           if-no-files-found: error
           retention-days: 14

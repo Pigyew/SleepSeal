@@ -15,4 +15,4 @@ for resource in Resources/*.lproj; do /bin/cp -R "$resource" build/SleepSeal.app
 /usr/bin/codesign --force --sign - build/PowerControl
 /usr/bin/codesign --verify --strict build/SleepSeal.app
 /usr/bin/codesign --verify --strict build/PowerControl
-printf '%s\n' 'Built SleepSeal 0.2.0 Beta (ad-hoc signed; not notarized).'
+printf '%s\n' 'Built SleepSeal 0.2.1 Beta (ad-hoc signed; not notarized).'
