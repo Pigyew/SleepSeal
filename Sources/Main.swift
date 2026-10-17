@@ -23,6 +23,7 @@ func writeReport(_ path: String, success: Bool, stage: String, message: String,
     if let snapshot {
         report["snapshot"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(snapshot))
     }
+    report["hotCorners"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(HotCorners.read()))
     if let mostRecentFailure { report["mostRecentFailure"] = mostRecentFailure }
     let url = URL(fileURLWithPath: path)
     try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -53,14 +54,21 @@ final class Acknowledgement {
 
 final class Watcher: NSObject {
     let engine: SleepGuard
+    let transitions: SleepTransitions
     let queue = DispatchQueue(label: "local.sleepseal.state")
     private var powerPort: io_connect_t = 0
     private var notificationPort: IONotificationPortRef?
     private var notifier: io_object_t = 0
     private var timer: DispatchSourceTimer?
     private var mostRecentFailure: String?
+    private var screenLockedObserved = false
 
-    init(engine: SleepGuard) { self.engine = engine }
+    init(engine: SleepGuard) {
+        self.engine = engine
+        self.transitions = SleepTransitions(engine: engine)
+        self.screenLockedObserved = ConsoleSession.locked ||
+            (engine.pending?.sawLock == true && engine.pending?.restorationAuthorized != true)
+    }
 
     func perform(_ name: String, _ action: () throws -> Void) {
         do {
@@ -96,25 +104,31 @@ final class Watcher: NSObject {
         let center = DistributedNotificationCenter.default()
         center.addObserver(self, selector: #selector(locked), name: .init("com.apple.screenIsLocked"), object: nil)
         center.addObserver(self, selector: #selector(unlocked), name: .init("com.apple.screenIsUnlocked"), object: nil)
+        let workspace = NSWorkspace.shared.notificationCenter
+        workspace.addObserver(self, selector: #selector(displaySlept), name: NSWorkspace.screensDidSleepNotification, object: nil)
+        workspace.addObserver(self, selector: #selector(displayWoke), name: NSWorkspace.screensDidWakeNotification, object: nil)
         // Fast user switching is deliberately not an unlock signal.
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now() + 10, repeating: 10)
         timer.setEventHandler { [weak self] in
             guard let self, self.engine.pending != nil else { return }
-            if ConsoleSession.locked { self.perform("确认锁定") { try self.engine.didLock() } }
+            if ConsoleSession.locked {
+                self.screenLockedObserved = true
+                self.perform("确认锁定") { try self.engine.didLock() }
+            }
             self.perform("核对守护状态") { try self.engine.reconcile(sessionVerified: ConsoleSession.verified) }
         }
         timer.resume()
         self.timer = timer
         queue.async {
-            self.report(success: true, stage: "ready", message: "已注册睡眠与解锁事件；尚未切换无线或电源设置")
+            self.report(success: true, stage: "ready", message: "已注册系统睡眠、显示器睡眠与解锁事件；尚未切换设置")
             if ConsoleSession.locked { self.perform("确认锁定") { try self.engine.didLock() } }
             // A restart never treats an already visible desktop as a new unlock.
             if self.engine.pending != nil {
                 self.perform("恢复守护") { try self.engine.reconcile(sessionVerified: ConsoleSession.verified) }
             }
         }
-        log("守护已启动；仅在屏幕解锁事件后恢复设置")
+        log("守护已启动；监听系统和显示器睡眠（含触发角与闲置自动睡眠），仅解锁后恢复")
     }
 
     func powerEvent(_ type: UInt32, _ argument: Int) {
@@ -126,21 +140,44 @@ final class Watcher: NSObject {
             DispatchQueue.global().asyncAfter(deadline: .now() + 20) { ack.finish() }
             queue.async {
                 defer { ack.finish() }
-                self.perform("睡眠前处理") { try self.engine.beforeSleep() }
-                if ConsoleSession.locked { self.perform("确认锁定") { try self.engine.didLock() } }
+                self.perform("系统睡眠前处理") {
+                    try self.transitions.sleep(.system, sessionLocked: ConsoleSession.locked || self.screenLockedObserved)
+                }
             }
         } else if type == systemHasPoweredOn {
-            queue.async { self.perform("唤醒后保持关闭") { try self.engine.didWake() } }
+            queue.async {
+                self.perform("系统唤醒后核对") { try self.transitions.wake(.system, sessionVerified: ConsoleSession.verified) }
+            }
+        }
+    }
+
+    @objc private func displaySlept(_ note: Notification) {
+        queue.async {
+            self.perform("显示器睡眠处理（含触发角和闲置）") {
+                try self.transitions.sleep(.display, sessionLocked: ConsoleSession.locked || self.screenLockedObserved)
+            }
+        }
+    }
+
+    @objc private func displayWoke(_ note: Notification) {
+        queue.async {
+            self.perform("显示器唤醒后核对") {
+                try self.transitions.wake(.display, sessionVerified: ConsoleSession.verified)
+            }
         }
     }
 
     @objc private func locked(_ note: Notification) {
-        queue.async { self.perform("收到锁屏事件") { try self.engine.didLock() } }
+        queue.async {
+            self.screenLockedObserved = true
+            self.perform("收到锁屏事件") { try self.engine.didLock() }
+        }
     }
 
     @objc private func unlocked(_ note: Notification) {
         // Session properties can trail the distributed notification briefly.
         queue.async {
+            self.screenLockedObserved = false
             guard let gateID = self.engine.pending?.id else { return }
             for delay in [0.15, 0.6, 1.5] {
                 self.queue.asyncAfter(deadline: .now() + delay) {
@@ -236,7 +273,7 @@ final class PermissionRequest: NSObject, CBCentralManagerDelegate {
         }
         if option == "--doctor" {
             let system = MacSystem()
-            print("SleepSeal 0.1.1 — 只读检查（终端进程的权限归属可能不同，请优先使用 Check.command）")
+            print("SleepSeal 0.1.2 — 只读检查（终端进程的权限归属可能不同，请优先使用 Check.command）")
             print("蓝牙控制接口：\(system.bluetooth.available ? "可用" : "不可用")")
             print("蓝牙权限：\(CBManager.authorization == .allowedAlways ? "已允许" : "尚未允许；请运行安装程序")")
             print("当前用户会话：\(ConsoleSession.verified ? "已登录且未锁定" : "锁定或无法确认")")

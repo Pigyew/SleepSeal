@@ -15,7 +15,7 @@ trap finish EXIT
 stage() { task_stage="$1"; printf '\n[%s] %s\n' "$(date '+%F %T')" "$task_stage"; }
 if [[ "$(uname -s)" != Darwin ]]; then echo '仅支持 macOS。'; exit 1; fi
 if [[ "$EUID" == 0 ]]; then echo '请直接双击安装，不要以 root 运行整个安装程序。'; exit 1; fi
-echo 'SleepSeal 0.1.1：睡眠前关闭无线，解锁后恢复。'
+echo 'SleepSeal 0.1.2：系统或显示器睡眠时关闭无线，解锁后恢复。'
 echo 'M 系列的深度睡眠由 macOS 管理。关闭无线会影响 Apple Watch 解锁、睡眠联网和查找功能。'
 echo '解锁请使用 Mac 内置键盘／触控板／Touch ID 或有线设备。'
 task_uid="$(id -u)"
@@ -59,6 +59,10 @@ if [[ -f "$HOME/Library/Application Support/SleepSeal/pending.json" ]]; then
   stage '恢复上次保留的设置'
   app_report --recover-report "$task_logdir/recovery-result.json"
 fi
+stage '检查现有电源权限'
+if app_report --preflight-report "$task_logdir/preflight-result.json"; then
+  echo '现有权限已满足，沿用之前授权。'
+else
 stage '安装受限电源权限'
 echo '安装限定的电源设置权限，需要一次管理员密码。'
 echo '只允许本账户修改列出的电源开关，不授予任意命令权限。'
@@ -81,6 +85,7 @@ stage '在应用内检查无线和电源权限'
 if ! app_report --preflight-report "$task_logdir/preflight-result.json"; then
   echo '安装尚未完成，应用和受限电源权限已保留。可修正问题后重试，或运行 Uninstall.command 清理。'
   exit 1
+fi
 fi
 # Construct property values with plutil, so spaces and XML characters in paths are safe.
 task_newplist="$task_temp/agent.plist"

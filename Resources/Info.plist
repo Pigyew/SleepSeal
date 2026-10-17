@@ -6,11 +6,11 @@
   <key>CFBundleDisplayName</key><string>SleepSeal</string>
   <key>CFBundleExecutable</key><string>SleepSeal</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleVersion</key><string>2</string>
-  <key>CFBundleShortVersionString</key><string>0.1.1</string>
+  <key>CFBundleVersion</key><string>3</string>
+  <key>CFBundleShortVersionString</key><string>0.1.2</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>LSUIElement</key><true/>
-  <key>NSBluetoothAlwaysUsageDescription</key><string>在 Mac 睡眠前关闭蓝牙，并在你解锁屏幕后恢复之前的蓝牙状态。</string>
+  <key>NSBluetoothAlwaysUsageDescription</key><string>在系统或显示器睡眠时关闭蓝牙，并在你解锁屏幕后恢复之前的蓝牙状态。</string>
   <key>NSBluetoothPeripheralUsageDescription</key><string>管理睡眠期间的蓝牙电源。</string>
   <key>NSHighResolutionCapable</key><true/>
 </dict></plist>

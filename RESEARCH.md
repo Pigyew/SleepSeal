@@ -14,6 +14,8 @@
 SleepSeal 根据以下技术资料自行实现，没有复制以上应用源码：
 
 - [Apple：睡眠与唤醒通知](https://developer.apple.com/library/archive/qa/qa1340/_index.html)。使用 IOKit 睡眠前通知并及时确认；额外设置 20 秒确认上限，避免本工具无限阻塞睡眠。
+- [Apple：显示器睡眠事件](https://developer.apple.com/documentation/appkit/nsworkspace/screensdidsleepnotification)与[显示器唤醒事件](https://developer.apple.com/documentation/appkit/nsworkspace/screensdidwakenotification)。显示器睡眠与整机睡眠分开通知，必须同时监听；亮屏本身不作为恢复授权。
+- [Apple：触发角](https://support.apple.com/guide/mac-help/perform-quick-actions-with-hot-corners-mchlp3000/mac)与 [nix-darwin 的 Dock 配置定义](https://github.com/nix-darwin/nix-darwin/blob/master/modules/system/defaults/dock.nix)。四角可配置不同动作和修饰键，动作值 10 对应显示器睡眠；实际触发应依据系统事件，而非硬编码某个角的位置。
 - [Apple pmset 源码](https://github.com/apple-oss-distributions/PowerManagement/blob/main/pmset/pmset.m)。`powermode` 包括自动、低电量、高性能三态，需要按电源配置保存；源码还说明关闭网络保活对查找等服务的影响。
 - [Apple pmset 手册](https://github.com/apple-oss-distributions/PowerManagement/blob/main/pmset/pmset.1) 与 [NIST 的 Apple Silicon 讨论](https://github.com/usnistgov/macos_security/issues/338)。传统休眠参数不足以证明 M 系列可以按需进入相同硬件状态，因此保留系统策略。
 - [Hammerspoon 的屏幕事件实现](https://github.com/Hammerspoon/hammerspoon/blob/master/extensions/caffeinate/libcaffeinate_watcher.m)。区分屏幕解锁、系统唤醒和用户会话切换。
