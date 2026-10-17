@@ -44,5 +44,5 @@ trap - EXIT HUP INT TERM
 # user process performs recovery, migration and LaunchAgent/configuration work.
 # Failure to open the UI leaves a usable app in Applications; Installer succeeds.
 /bin/launchctl asuser "$console_uid" /usr/bin/sudo -u "$console_name" \
-    /usr/bin/open -a /Applications/SleepSeal.app --args --install-user || true
+    /usr/bin/open -n -a /Applications/SleepSeal.app --args --install-user || true
 exit 0

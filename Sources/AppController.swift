@@ -8,6 +8,7 @@ import CoreBluetooth
     private var listener: AgentListener?
     private var window: NSWindow?
     private var statusItem: NSStatusItem?
+    private var statusMenu: NSMenu?
     private var bluetoothRequest: CBCentralManager?
     private var quitAuthorized = false
     private var onboardingPresented = false
@@ -63,7 +64,15 @@ import CoreBluetooth
         item(model.isPaused ? "menu.resume" : "menu.pause", #selector(togglePause))
         item("action.restore", #selector(restore))
         menu.addItem(.separator()); item("menu.quit", #selector(quit), shortcut: "q")
-        statusItem?.menu = menu
+        statusMenu = menu
+        statusItem?.button?.target = self
+        statusItem?.button?.action = #selector(statusPressed)
+        statusItem?.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
+    }
+    @objc private func statusPressed() {
+        if NSApp.currentEvent?.type == .rightMouseUp, let button = statusItem?.button {
+            statusMenu?.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.minY), in: button)
+        } else { showDashboard() }
     }
     @objc private func openPanel() { showDashboard() }
     @objc private func sleepNow() { if mock { model.send(.sleepNow) } else { handle(.sleepNow) } }

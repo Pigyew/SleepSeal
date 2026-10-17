@@ -34,6 +34,8 @@ The package installs `/Applications/SleepSeal.app` and a root-owned helper. The 
 
 Missing Bluetooth permission or an unavailable helper does not remove the dashboard. Open Diagnostics & recovery to review the problem; reinstall the package when the power helper needs repair.
 
+Left-click the menu bar icon to open the panel; right-click it for quick actions. Closing the panel keeps background protection running.
+
 ## Choose when protection applies
 
 **All methods** covers every actual system/display sleep event, including events whose source cannot be identified. **Custom** enables independent choices, including any combination of these four methods:
