@@ -1,94 +1,118 @@
-# SleepSeal 睡眠守护
+# SleepSeal
 
-为 Apple M 系列 MacBook 编写的本地后台工具。系统即将睡眠或显示器进入睡眠时，关闭 Wi-Fi 和蓝牙、开启低电量模式；系统后台唤醒或只点亮锁屏时继续保持关闭，收到屏幕解锁事件并确认当前用户会话后，恢复原设置。
+[![macOS Beta checks](https://github.com/Pigyew/SleepSeal/actions/workflows/ci.yml/badge.svg)](https://github.com/Pigyew/SleepSeal/actions/workflows/ci.yml)
+[简体中文](README.zh-CN.md) · [Download 0.2.0 Beta](https://github.com/Pigyew/SleepSeal/releases/tag/v0.2.0) · [MIT license](LICENSE)
 
-**这是 0.1.2 版本。菜单睡眠和合盖路径已由用户确认生效；新增的显示器睡眠路径仍需目标设备实测。M 系列深度睡眠仍由 macOS 管理，本工具不保证强制进入 Intel 式的磁盘休眠，也不修改 `hibernatemode`。**
+SleepSeal is a local macOS menu bar app that helps investigate and reduce unusual MacBook battery drain during sleep. At a protected system or display sleep, it saves the original settings, turns off Wi-Fi and Bluetooth, and enables the available Low Power Mode. It restores the saved settings after a real screen unlock is observed and the current console session is verified.
 
-0.1.2 新增显示器睡眠事件，包括触发角的“将显示器置于睡眠状态”与闲置自动熄屏；原有菜单、合盖和系统闲置睡眠继续适用。读取四个触发角的动作及修饰键，随诊断更新；实际处理依据系统事件，因此位置调整或未启用触发角的用户也适用。速记、桌面、调度中心等角落动作不会被当作睡眠。
+**0.2.0 is a Beta for Apple silicon Macs, with macOS 13 as the minimum deployment target.** It uses a temporary ad-hoc signature and is not Developer ID signed or notarized. A minimum target is not evidence of testing every macOS release. No overnight battery-saving claim or fixed percentage has been measured.
 
-0.1.1 修复了安装时授权结果的传递：现在由图形应用直接返回权限与检查结果，取消会阻塞安装的成功弹窗；后台确认运行后才提示成功。新增安装阶段日志和后台状态记录，`Check.command` 会先判断服务是否真的运行。
+![SleepSeal dashboard](docs/images/overview-en.png)
 
-## 安装
+Dashboard preview using simulated device states.
 
-适用 macOS 13 或更高版本。交付包包含 Apple Silicon 本机程序和完整源码，不依赖 Homebrew、Python 或 blueutil。
+## Install without Terminal
 
-1. 将整个 SleepSeal 文件夹放在方便保留的位置，双击 `Install.command`。
-2. 按提示允许 SleepSeal 使用蓝牙权限。安装程序会在拒绝权限时停止。
-3. 首次安装在终端窗口输入一次管理员密码，用于配置受限的电源设置权限；升级时已有权限验证通过会直接沿用。输入密码时不会显示字符。必须看到“已安装并启用登录自启”，并在 `Check.command` 中看到“后台服务：运行中”，再测试睡眠。
+1. Download `SleepSeal-0.2.0-Beta-AppleSilicon.pkg` and its checksum from the [release](https://github.com/Pigyew/SleepSeal/releases/tag/v0.2.0).
+2. Open the package and follow the normal macOS Installer. It requests administrator authorization to install the limited power-setting helper.
+3. Open **SleepSeal** from Applications if its window does not appear automatically. Follow the setup guide, allow Bluetooth access, and confirm the protection choices. A new installation starts with **All methods** selected but does not enable protection before confirmation.
+4. Use the SleepSeal menu bar icon to reopen the dashboard. Closing the window keeps protection running. Language options are **Follow system**, **简体中文**, and **English**.
 
-如果之前的 0.1 只复制了应用但未完成安装，直接运行新版 `Install.command` 即可修复。由于使用本地临时签名，macOS 可能要求新版重新获得蓝牙授权。
+macOS may block this unnotarized Beta. After checking the source and release checksum, use the normal **System Settings → Privacy & Security → Open Anyway** approval when macOS offers it. The package may also require approval. Do not disable Gatekeeper or SIP. See [Apple's guidance on opening apps](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unknown-developer-mh40616/mac).
 
-安装到 `~/Applications/SleepSeal.app`，通过当前账户的 LaunchAgent 登录自启。没有菜单栏图标。首次安装不会立即关闭网络，下一次睡眠时才执行策略。
+The package installs `/Applications/SleepSeal.app` and a root-owned helper. The app manages its own current-user login item, settings, and recovery files. Upgrades migrate the old user-level background service and preserve unfinished recovery; existing users retain their previous all-method protection. If migration or recovery cannot finish, the panel provides a retry path.
 
-若 macOS 拦截本地程序，请在确认源码来源后使用系统提供的“仍要打开”流程。本程序仅有本地临时签名，未经 Apple Developer ID 签名或公证；无需关闭 SIP 或 Gatekeeper。
+## Dashboard
 
-## 实际行为
+| Page | What you can do |
+|---|---|
+| Overview | Check actual radio and power state, last trigger and recovery results; turn off the display or request sleep. |
+| Protection | Choose all methods or a combination; inspect all four system Hot Corners. |
+| Power settings | Set separate battery and plugged-in display/sleep timers and supported energy modes. |
+| Diagnostics & recovery | Check access and sleep blockers, restore connections, export diagnostics locally. |
+| Settings | Choose language and login behavior, pause protection, or uninstall safely. |
 
-| 时机 | 行为 |
-| --- | --- |
-| 正常运行 | 不修改无线或电源设置 |
-| 系统即将睡眠（菜单、合盖、闲置） | 先保存原状态，再关闭两种无线，并开启可识别电源配置中的低电量模式 |
-| 显示器进入睡眠（任意触发角、闲置自动熄屏等） | 执行相同省电策略；屏幕与系统睡眠事件重叠时保留同一份原始记录和解锁门槛 |
-| 睡眠期间的后台唤醒 | 不恢复连接；进程获得运行机会后再次核对关闭状态 |
-| 仅亮起锁屏 | 不恢复 |
-| 屏幕已锁定、之后解锁 | 验证当前账户处于前台且未锁定，再恢复原状态 |
-| 部分恢复失败 | 保留恢复记录，在会话仍解锁时继续重试 |
-| 再次睡眠 | 原始恢复记录不被“已关闭”状态覆盖，建立新的解锁门槛 |
+Missing Bluetooth permission or an unavailable helper does not remove the dashboard. Open Diagnostics & recovery to review the problem; reinstall the package when the power helper needs repair.
 
-低电量模式按电池与电源适配器配置分别保存和恢复，兼容新系统的 `powermode` 与旧系统的 `lowpowermode`。原本使用高性能模式的设备，会恢复原始值 2，而非一律切回自动模式。
+## Choose when protection applies
 
-工具还会临时关闭当前电源配置中实际出现的 `powernap`、`tcpkeepalive`、`womp`、`proximitywake`，以减少可配置的后台网络活动。它不会强制让电脑睡眠，也不会保证消除所有系统唤醒或获得某个固定省电比例。
+**All methods** covers every actual system/display sleep event, including events whose source cannot be identified. **Custom** enables independent choices, including any combination of these four methods:
 
-## 使用影响与边界
+| Method | How it is recognized |
+|---|---|
+| Manual sleep | Use **Sleep now** in the SleepSeal window or menu. A failed or unconfirmed sleep request does not turn off the radios. |
+| Lid sleep | A recent lid-close state is associated with an actual system sleep. Working with the lid closed and an external display does not trigger protection by itself. |
+| System Hot Corners | SleepSeal reads every corner's action and modifier keys. A recent entry into a configured **Put Display to Sleep** corner is associated with an actual display sleep. Select all configured sleep corners or specific corners. |
+| Idle sleep | Actual idle system sleep, or display sleep associated with the configured inactivity timer. |
 
-- 蓝牙关闭后，Apple Watch 自动解锁和蓝牙键鼠不能用于解锁。请使用内置键盘、触控板、Touch ID 或有线设备。
-- 关闭无线及网络保活会影响睡眠期间的“查找”、远程访问、后台同步、备份等功能。
-- 请将“系统设置 → 锁定屏幕 → 屏幕保护程序启动或显示器关闭后需要密码”设为“立即”。如果睡眠后没有锁屏，工具会继续等待一次真正的锁定与解锁，也可以手动恢复。
-- 蓝牙电源接口与屏幕解锁通知依赖 macOS 的未公开接口，系统升级后可能失效。该工具控制的是操作系统提供的软件开关，不能保证固件或系统服务永远不会短暂重新启用硬件。
-- 进程在真正睡眠时不能执行检查。后台唤醒后的核对，以及等待解锁时每 10 秒的核对，均需要进程获得运行机会；这不是硬件层面的绝对断电保证。
-- 快速切换用户、重新登录、重启进程不会自动当作解锁。若有未恢复记录，可能需要在当前账户再次锁定并解锁，或运行手动恢复。
-- 如果睡眠准备被系统取消而未产生锁屏，工具也会继续等待解锁。手动恢复可处理这一情况。
+Hot Corner and display-idle classification is automatic correlation, not an exact macOS “source” field. Moving quickly is not required; leaving the pointer parked in a corner does not create a new trigger. The corner diagram reflects the current system settings, and **Open System Settings** lets you change them yourself. SleepSeal does not rewrite Hot Corner settings.
 
-## 检查、暂停与卸载
+In Custom mode, an unknown or unselected source **keeps the connection unchanged** and the panel explains why protection was skipped. Apple menu → Sleep is covered by All methods; it is not advertised as a separately identifiable manual entry. A screen saver or screen lock alone is not sleep.
 
-双击 `Check.command` 查看自启、后台进程、最近一次无线与电源状态，以及最近 25 行安装/运行日志。该步骤不修改无线或电源设置。
+Rule edits apply to the next sleep cycle. They do not replace the original settings of a cycle that is already awaiting recovery.
 
-请在锁屏时观察是否仍断网；解锁后 Wi-Fi 和低电量模式会恢复原设置，此时看到 Wi-Fi 开启本身不能说明失败。后台的 `runtime-status.json` 与日志会记录处理结果。
+## System power settings
 
-双击 `Restore.command`：先停止守护，再在已解锁的当前用户会话中恢复保存的设置。下次登录会重新启动守护。
+These controls change **persistent macOS settings**. They remain in effect after SleepSeal quits. Opening the page reads the current values without applying defaults.
 
-双击 `Uninstall.command`：先停止并恢复，再移除应用、自启和电源权限。如果恢复失败，会保留记录和权限，便于重试。不要直接删除应用或 `pending.json`，以免丢失原始设置。
+| Control | Battery and plugged in |
+|---|---|
+| Turn display off after inactivity | Independent times, Never, or a custom 1–1440 minutes. |
+| Put system to sleep after inactivity | Independent times, Never, or a custom 1–1440 minutes. |
+| Daily energy mode | Only modes verified as available; battery and adapter are independent. |
+| Deep sleep time | **Managed by macOS** on the current Apple silicon implementation. |
 
-日志：`~/Library/Logs/SleepSeal/guard.log`。恢复记录：`~/Library/Application Support/SleepSeal/pending.json`。日志不主动记录 Wi-Fi 名称、密码、蓝牙设备地址或浏览内容；长时间使用可在停止守护后手动清理日志。
+**Apply changes** writes only edited fields, checks for external changes, and reads back the actual result. A conflict requires a refresh instead of overwriting newer system settings. An unusual existing timer value is preserved unless you edit it. Never is stored as `0`.
 
-## 首次实机验证
+SleepSeal saves the values from before its first change separately from sleep-protection snapshots. **Restore original power settings** restores an app-written field only if it still matches SleepSeal's last saved value; later external changes are left alone. If a multi-field write fails, it attempts rollback and reports the observed result. Energy-mode editing is temporarily read-only while a protection or recovery cycle is pending; persistent timers remain separate and are not undone at unlock.
 
-先保存工作，保持内置键盘或有线输入设备可用：
+macOS power assertions can postpone automatic sleep. The diagnostics page shows applications that are preventing sleep; SleepSeal does not force-quit them or promise an exact countdown. See [Apple's sleep and wake settings guide](https://support.apple.com/guide/mac-help/set-sleep-and-wake-settings-mchle41a6ccd/mac).
 
-1. 记录睡眠前两种无线的开关和低电量模式状态，合盖约 30 秒。
-2. 开盖停留在锁屏，确认无线仍关闭。还可以分别测试系统当前配置的显示器睡眠触发角、等待闲置自动熄屏；它们应执行同样策略。
-3. 使用内置设备或 Touch ID 解锁；数秒内应恢复原有状态。
-4. 再试一次“睡眠前 Wi-Fi 或蓝牙本来就关闭”，确认解锁后仍保持原来的关闭状态。
-5. 双击 `Check.command` 查看是否有失败日志；遇到异常先运行 `Restore.command`。
+Apple silicon has no verified Windows-style manual deep-hibernation timer in this project. SleepSeal does not offer a fake deep-sleep countdown or modify `hibernatemode` to claim one.
 
-要验证过夜电量和后台唤醒次数，需要在目标电脑上做实际对照；目前没有进行这项验证。
+## Recovery, pause and uninstall
 
-## 权限设计与构建
+Only a newly observed screen unlock followed by verification of the current, unlocked console user authorizes automatic recovery. A lit lock screen, background wake, login check or ordinary “already unlocked” poll does not. Delayed session verification is retried for the same sleep cycle; a new sleep or lock invalidates an older unlock candidate.
 
-守护进程以普通用户运行。管理员操作仅安装当前账户的 sudoers 规则，命令被限制为固定路径 `/usr/bin/pmset`、电池/适配器范围，以及列出的开关和值；没有 `NOPASSWD: ALL`、任意命令通配符、root 常驻进程或关闭系统安全机制。
+Use **Restore connections** for explicit recovery in your unlocked session. Pause, quit and uninstall restore pending transient settings first. If recovery fails, the app retains its record and offers retry instead of deleting the information needed to recover. Uninstall preserves user-chosen persistent power timers by default; restoring the original power settings is a separate explicit choice. A shared installation is retained while another account still has a SleepSeal authorization rule.
 
-从源码重新构建需要 Xcode 或 Command Line Tools：
+Wi-Fi, Bluetooth and system energy settings are shared by Mac accounts. SleepSeal reserves an unfinished protection cycle for its original account rather than letting another account overwrite the snapshot. If a message says another account needs recovery, switch back to that account and restore it first. This reservation survives a restart; fast user switching and concurrent-account hardware behavior still need wider real-device testing.
+
+For a first hardware check, save your work and keep the built-in keyboard, trackpad, Touch ID, or a wired input device available. Sleep briefly, wake to the lock screen, then unlock and check the recorded results. Repeat with a radio already off to confirm its original off state is retained. Real sleep and wireless tests affect the computer you are using.
+
+## How it works and practical limits
+
+One ordinary-user background process owns the menu, dashboard, event listeners, and serialized protection controller. System and display sleep notifications are merged into a cycle. The original Wi-Fi, Bluetooth and per-source energy/network settings are durably recorded before a change. Available `powernap`, `tcpkeepalive`, `womp`, and `proximitywake` settings are temporarily disabled too. Low Power Mode uses the current `powermode` key or the older `lowpowermode` key and retains the original mode, including an existing High Power Mode.
+
+The process rechecks pending protection every 10 seconds when macOS lets it run. It cannot execute while the machine is asleep and cannot guarantee that firmware or system services never briefly re-enable hardware. Sleep preparation has a bounded operation budget and confirmation deadline. Partial failures retain recovery state. Local logs rotate at 1 MiB per file, retaining three files.
+
+- Disabling Bluetooth and Wi-Fi prevents Apple Watch Auto Unlock and wireless input from being used to unlock. Use built-in or wired input.
+- Offline sleep affects Find My availability, remote access, background sync, backups, and other network-dependent features.
+- Set the system password requirement after display-off/screen-saver to **Immediately** if you want a consistent lock/unlock recovery path. If no lock occurs, use explicit recovery.
+- Bluetooth power control and screen-lock verification depend partly on private macOS interfaces. System updates can change their behavior.
+- Reopening the panel or restarting the app is not an unlock. An unfinished cycle may require a fresh lock/unlock or explicit recovery.
+- Abnormal drain has many causes. This tool does not guarantee a particular battery saving or eliminate every wake.
+
+## Security and privacy
+
+Administrator authorization is handled by the graphical Installer. The root-owned helper at `/Library/PrivilegedHelperTools/local.sleepseal.PowerControl` accepts only a fixed operation, battery/adapter source, allowlisted key, and strictly validated integer. It launches `/usr/bin/pmset` with argument arrays. It accepts no arbitrary executable, file path, shell string or hibernation key. The current-user sudo rule grants this parser, not unrestricted `pmset` or `NOPASSWD: ALL`. Root authorization records are separate from user settings. There is no root background daemon.
+
+Dashboard/control XPC requests require the same user and the designated code requirement of the current build. Merely sharing the bundle identifier or a process ID is insufficient. Read [Security](docs/SECURITY.md) and [Privacy](docs/PRIVACY.md) for the boundaries and local files.
+
+SleepSeal has no account, telemetry service or cloud backend. The optional local diagnostic export contains only the app/OS version, protection status, radio/power states and permission readiness. It excludes raw logs, application blocker names and reasons, user paths, network identifiers and recovery snapshots. Review any file or screenshot before sharing, and do not attach your entire Application Support or Logs folder to a public issue.
+
+## Build and verify
+
+Developers need an Apple silicon Mac and Xcode or Command Line Tools. Ordinary users need neither Terminal nor Homebrew.
 
 ```sh
-cd /你的路径/SleepSeal
-bash build.sh
 bash test.sh
+bash build.sh
+bash package.sh
 ```
 
-`test.sh` 只运行模拟状态机、电源配置解析和安装脚本语法检查，不触发睡眠或切换真实无线、电源设置。安装、权限对话框和真实硬件行为需要人工验证。
+Tests use simulated device adapters; they do not turn off real radios, change system power settings, or put the test machine to sleep. Coverage includes recovery gates and retries, event overlap, all trigger combinations, corner geometry/configuration/modifiers, persistent power conflicts and rollback, and helper argument rejection. UI verification uses simulated states. Rendering and native accessibility semantics do not constitute a completed manual VoiceOver audit.
 
-验证包含模拟状态机、电源解析/参数白名单、显示器与系统睡眠事件交错、四角配置与修饰键解析，以及安装脚本语法、应用配置和本地签名。构建环境为 arm64、Swift 6.4，最低部署目标 macOS 13。
+CI builds on an ARM64 macOS 15 runner with the Xcode 16.4/macOS 15 SDK toolchain, checks signatures and package content, and creates an unsigned Beta installer artifact. Automated checks do not establish real-device compatibility on every OS version, external-display combination, or overnight battery behavior. The prototype's menu and lid paths were confirmed on one Apple silicon Mac; the expanded 0.2 paths need wider hardware testing.
 
-若安装前检查失败，应用和受限权限可能已经写入，但守护不会继续启用。可修正问题后重新安装，或运行 `Uninstall.command` 清理。
-
-检索结果与技术依据见 [RESEARCH.md](RESEARCH.md)。
+See [Contributing](docs/CONTRIBUTING.md), [Changelog](docs/CHANGELOG.md), [snapshot provenance](docs/HISTORY.md), [UI behavior](docs/UX_CONTRACT.md), and [technical research](RESEARCH.md). Prototype archives were imported with truthful import dates; they are not represented as original historical Git commits.

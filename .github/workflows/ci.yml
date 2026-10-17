@@ -1,0 +1,91 @@
+name: macOS Beta checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      # Pin a macOS 15 SDK toolchain as well as the host OS. A future runner
+      # default must not silently turn the compatibility check into SDK 26+.
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Apple silicon toolchain
+        run: |
+          test "$(uname -m)" = arm64
+          xcrun swift --version
+          xcodebuild -version
+          case "$(xcrun --sdk macosx --show-sdk-version)" in 15.*) ;; *) exit 1 ;; esac
+          sw_vers
+      - name: Simulated tests and script checks
+        run: bash test.sh
+      - name: Build native app and narrow helper
+        run: bash build.sh
+      - name: Verify binaries, metadata and public source hygiene
+        run: |
+          codesign --verify --strict build/SleepSeal.app
+          codesign --verify --strict build/PowerControl
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' build/SleepSeal.app/Contents/Info.plist)" = 0.2.0
+          test "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' build/SleepSeal.app/Contents/Info.plist)" = 13.0
+          lipo -verify_arch arm64 build/SleepSeal.app/Contents/MacOS/SleepSeal
+          lipo -verify_arch arm64 build/PowerControl
+          python3 - <<'PY'
+          import pathlib, subprocess
+          paths = subprocess.check_output(['git', 'ls-files', '-z']).decode().split('\0')
+          for name in filter(None, paths):
+              p = pathlib.PurePosixPath(name)
+              assert not any(part in {'build', '__MACOSX', '.DS_Store', 'node_modules', '.build'} for part in p.parts), name
+              assert p.suffix not in {'.log', '.pkg', '.dmg', '.zip', '.p12', '.key'}, name
+              assert p.name not in {'pending.json', 'configuration.json', 'power-preferences.json', 'runtime-status.json'}, name
+          PY
+      - name: Build clean graphical installer
+        run: bash package.sh
+      - name: Inspect installer without installing it
+        run: |
+          pkgutil --expand-full build/SleepSeal-0.2.0-Beta-AppleSilicon.pkg build/package-inspection
+          python3 - <<'PY'
+          import pathlib, xml.etree.ElementTree as ET
+          root = pathlib.Path('build/package-inspection')
+          payloads = [p for p in root.rglob('Payload') if p.is_dir()]
+          assert len(payloads) == 1, payloads
+          payload = payloads[0]
+          helper = 'Library/PrivilegedHelperTools/local.sleepseal.PowerControl'
+          app = 'Applications/SleepSeal.app'
+          parents = {'Applications', 'Library', 'Library/PrivilegedHelperTools'}
+          for path in payload.rglob('*'):
+              relative = path.relative_to(payload).as_posix()
+              assert relative in parents or relative == helper or relative == app or relative.startswith(app + '/'), relative
+              assert not path.is_symlink(), relative
+              assert path.name not in {'.DS_Store', '__MACOSX', 'pending.json', 'runtime-status.json'}, relative
+              assert path.suffix not in {'.log', '.p12', '.key'}, relative
+          assert (payload / helper).is_file()
+          assert (payload / app / 'Contents/MacOS/SleepSeal').is_file()
+          assert list(root.rglob('preinstall')) and list(root.rglob('postinstall'))
+          info = ET.parse(next(root.rglob('PackageInfo'))).getroot()
+          assert info.get('install-location') == '/' and info.get('auth') == 'root'
+          assert not list(info.find('relocate')), 'The app must not relocate into an old user-owned bundle.'
+          print('Installer contains only the app, helper and expected graphical installation scripts.')
+          PY
+          cd build
+          shasum -a 256 -c SleepSeal-0.2.0-Beta-AppleSilicon.pkg.sha256
+      - name: Retain unsigned Beta installer for review
+        uses: actions/upload-artifact@v4
+        with:
+          name: SleepSeal-0.2.0-Beta-AppleSilicon
+          path: |
+            build/SleepSeal-0.2.0-Beta-AppleSilicon.pkg
+            build/SleepSeal-0.2.0-Beta-AppleSilicon.pkg.sha256
+          if-no-files-found: error
+          retention-days: 14
