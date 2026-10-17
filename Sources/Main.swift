@@ -9,6 +9,33 @@ private let canSystemSleep: UInt32 = 0xe0000270
 private let systemWillSleep: UInt32 = 0xe0000280
 private let systemHasPoweredOn: UInt32 = 0xe0000300
 
+func writeReport(_ path: String, success: Bool, stage: String, message: String,
+                 snapshot: Snapshot? = nil, pending: PendingState? = nil, mostRecentFailure: String? = nil) throws {
+    var report: [String: Any] = [
+        "success": success, "stage": stage, "message": message,
+        "timestamp": ISO8601DateFormatter().string(from: Date()),
+        "pid": ProcessInfo.processInfo.processIdentifier,
+        "bluetoothPermission": CBManager.authorization == .allowedAlways,
+        "waitingForUnlock": pending != nil,
+        "sawLock": pending?.sawLock ?? false,
+        "restorationAuthorized": pending?.restorationAuthorized ?? false
+    ]
+    if let snapshot {
+        report["snapshot"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(snapshot))
+    }
+    if let mostRecentFailure { report["mostRecentFailure"] = mostRecentFailure }
+    let url = URL(fileURLWithPath: path)
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let data = try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
+    try data.write(to: url, options: .atomic)
+    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path)
+}
+
+func runtimeReportPath() -> String {
+    FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Logs/SleepSeal/runtime-status.json").path
+}
+
 final class Acknowledgement {
     private let lock = NSLock()
     private var done = false
@@ -31,11 +58,27 @@ final class Watcher: NSObject {
     private var notificationPort: IONotificationPortRef?
     private var notifier: io_object_t = 0
     private var timer: DispatchSourceTimer?
+    private var mostRecentFailure: String?
 
     init(engine: SleepGuard) { self.engine = engine }
 
     func perform(_ name: String, _ action: () throws -> Void) {
-        do { try action(); log(name) } catch { log("\(name)失败：\(error)") }
+        do {
+            try action()
+            log(name)
+            report(success: true, stage: name, message: "完成")
+        } catch {
+            mostRecentFailure = "\(ISO8601DateFormatter().string(from: Date())) \(name)：\(error)"
+            log("\(name)失败：\(error)")
+            report(success: false, stage: name, message: String(describing: error))
+        }
+    }
+
+    func report(success: Bool, stage: String, message: String) {
+        do {
+            try writeReport(runtimeReportPath(), success: success, stage: stage, message: message,
+                snapshot: try? MacSystem().capture(), pending: engine.pending, mostRecentFailure: mostRecentFailure)
+        } catch { log("诊断记录写入失败：\(error)") }
     }
 
     func start() throws {
@@ -64,6 +107,7 @@ final class Watcher: NSObject {
         timer.resume()
         self.timer = timer
         queue.async {
+            self.report(success: true, stage: "ready", message: "已注册睡眠与解锁事件；尚未切换无线或电源设置")
             if ConsoleSession.locked { self.perform("确认锁定") { try self.engine.didLock() } }
             // A restart never treats an already visible desktop as a new unlock.
             if self.engine.pending != nil {
@@ -110,22 +154,35 @@ final class Watcher: NSObject {
 
 final class PermissionRequest: NSObject, CBCentralManagerDelegate {
     private var manager: CBCentralManager!
-    override init() {
+    private let reportPath: String?
+    private var finished = false
+    init(reportPath: String?) {
+        self.reportPath = reportPath
         super.init()
         manager = CBCentralManager(delegate: self, queue: .main,
             options: [CBCentralManagerOptionShowPowerAlertKey: false])
+        DispatchQueue.main.asyncAfter(deadline: .now() + 120) { [weak self] in
+            self?.finish(success: false, message: "蓝牙授权等待超时，请重新安装并完成系统授权")
+        }
     }
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         guard CBManager.authorization != .notDetermined else { return }
         DispatchQueue.main.async {
-            let alert = NSAlert()
-            alert.messageText = CBManager.authorization == .allowedAlways ? "蓝牙权限已就绪" : "需要允许蓝牙权限"
-            alert.informativeText = CBManager.authorization == .allowedAlways
-                ? "请返回安装窗口继续。此步骤没有关闭蓝牙或 Wi-Fi。"
-                : "请在系统设置 → 隐私与安全性 → 蓝牙中允许 SleepSeal，然后重新安装。"
-            alert.runModal()
-            NSApplication.shared.terminate(nil)
+            let allowed = CBManager.authorization == .allowedAlways
+            self.finish(success: allowed, message: allowed ? "蓝牙权限已允许"
+                : "请在系统设置 → 隐私与安全性 → 蓝牙中允许 SleepSeal，然后重新安装")
         }
+    }
+
+    private func finish(success: Bool, message: String) {
+        guard !finished else { return }
+        finished = true
+        if let reportPath {
+            do { try writeReport(reportPath, success: success, stage: "bluetooth-permission", message: message) }
+            catch { log("权限结果写入失败：\(error)") }
+        } else { log(message) }
+        // No extra success dialog: the installer receives the result and continues.
+        NSApplication.shared.terminate(nil)
     }
 }
 
@@ -133,6 +190,30 @@ final class PermissionRequest: NSObject, CBCentralManagerDelegate {
     static func main() {
         guard getuid() != 0 else { fputs("请使用普通用户运行，不能以 root 运行。\n", stderr); exit(1) }
         let option = CommandLine.arguments.dropFirst().first ?? "--help"
+        let reportPath = CommandLine.arguments.count > 2 ? CommandLine.arguments[2] : nil
+        if ["--preflight-report", "--recover-report"].contains(option) {
+            guard let reportPath, reportPath.hasPrefix("/") else {
+                log("需要绝对路径的检查结果文件"); exit(1)
+            }
+            NSApplication.shared.setActivationPolicy(.accessory)
+            DispatchQueue.main.async {
+                do {
+                    if option == "--preflight-report" {
+                        let snapshot = try preflight()
+                        try writeReport(reportPath, success: true, stage: "preflight", message: "检查通过；未修改设置", snapshot: snapshot)
+                    } else {
+                        try recover()
+                        try writeReport(reportPath, success: true, stage: "recovery", message: "原设置已恢复")
+                    }
+                } catch {
+                    try? writeReport(reportPath, success: false, stage: option, message: String(describing: error))
+                    log("检查或恢复失败：\(error)")
+                }
+                NSApplication.shared.terminate(nil)
+            }
+            NSApplication.shared.run()
+            return
+        }
         if option == "--check-permission" {
             guard CBManager.authorization == .allowedAlways else {
                 fputs("尚未允许蓝牙权限；请在系统设置中允许 SleepSeal 后重新安装。\n", stderr)
@@ -142,30 +223,20 @@ final class PermissionRequest: NSObject, CBCentralManagerDelegate {
         }
         if option == "--preflight" {
             do {
-                guard CBManager.authorization == .allowedAlways else { throw GuardFailure("蓝牙权限未允许") }
-                let snapshot = try MacSystem().capture()
-                for value in snapshot.power {
-                    for target in Set([value.value, PowerPolicy.desired(value)]) {
-                        let result = try command("/usr/bin/sudo", ["-n", "-l", "/usr/bin/pmset",
-                            value.scope, value.key, String(target)])
-                        guard result.status == 0 else {
-                            throw GuardFailure("电源权限未就绪：\(value.scope) \(value.key)；守护尚未启动")
-                        }
-                    }
-                }
+                _ = try preflight()
                 print("安装前检查通过；未切换无线或电源设置。")
             } catch { log("安装前检查失败：\(error)"); exit(1) }
             return
         }
         if option == "--permissions" {
             NSApplication.shared.setActivationPolicy(.accessory)
-            let request = PermissionRequest()
+            let request = PermissionRequest(reportPath: reportPath)
             withExtendedLifetime(request) { NSApplication.shared.run() }
             return
         }
         if option == "--doctor" {
             let system = MacSystem()
-            print("SleepSeal 0.1 — 只读检查")
+            print("SleepSeal 0.1.1 — 只读检查（终端进程的权限归属可能不同，请优先使用 Check.command）")
             print("蓝牙控制接口：\(system.bluetooth.available ? "可用" : "不可用")")
             print("蓝牙权限：\(CBManager.authorization == .allowedAlways ? "已允许" : "尚未允许；请运行安装程序")")
             print("当前用户会话：\(ConsoleSession.verified ? "已登录且未锁定" : "锁定或无法确认")")
@@ -185,6 +256,7 @@ final class PermissionRequest: NSObject, CBCentralManagerDelegate {
             return
         }
         do {
+            NSApplication.shared.setActivationPolicy(.accessory)
             let store = try JSONStore()
             // The lock also prevents a manual recovery racing the live watcher.
             let lockPath = store.url.deletingLastPathComponent().appendingPathComponent("instance.lock").path
@@ -200,8 +272,39 @@ final class PermissionRequest: NSObject, CBCentralManagerDelegate {
                 return
             }
             let watcher = Watcher(engine: engine)
+            _ = try preflight()
             try watcher.start()
-            withExtendedLifetime(watcher) { RunLoop.main.run() }
-        } catch { log("启动或恢复失败：\(error)"); exit(1) }
+            withExtendedLifetime(watcher) { NSApplication.shared.run() }
+        } catch {
+            try? writeReport(runtimeReportPath(), success: false, stage: "startup-failed", message: String(describing: error))
+            log("启动或恢复失败：\(error)"); exit(1)
+        }
+    }
+
+    static func preflight() throws -> Snapshot {
+        guard CBManager.authorization == .allowedAlways else { throw GuardFailure("当前应用进程的蓝牙权限未允许") }
+        let snapshot = try MacSystem().capture()
+        for value in snapshot.power {
+            for target in Set([value.value, PowerPolicy.desired(value)]) {
+                let result = try command("/usr/bin/sudo", ["-n", "-l", "/usr/bin/pmset", value.scope, value.key, String(target)])
+                guard result.status == 0 else {
+                    throw GuardFailure("电源权限未就绪：\(value.scope) \(value.key)")
+                }
+            }
+        }
+        return snapshot
+    }
+
+    static func recover() throws {
+        let store = try JSONStore()
+        guard try store.load() != nil else { return }
+        let lockPath = store.url.deletingLastPathComponent().appendingPathComponent("instance.lock").path
+        let lockFD = open(lockPath, O_CREAT | O_RDWR | O_NOFOLLOW, 0o600)
+        guard lockFD >= 0, flock(lockFD, LOCK_EX | LOCK_NB) == 0 else {
+            throw GuardFailure("请先停止后台守护再恢复")
+        }
+        defer { flock(lockFD, LOCK_UN); close(lockFD) }
+        let engine = try SleepGuard(system: MacSystem(), store: store)
+        try engine.recover(sessionVerified: ConsoleSession.verified)
     }
 }
