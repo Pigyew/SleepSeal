@@ -39,8 +39,8 @@ jobs:
           codesign --verify --strict build/PowerControl
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' build/SleepSeal.app/Contents/Info.plist)" = 0.2.0
           test "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' build/SleepSeal.app/Contents/Info.plist)" = 13.0
-          lipo -verify_arch arm64 build/SleepSeal.app/Contents/MacOS/SleepSeal
-          lipo -verify_arch arm64 build/PowerControl
+          lipo build/SleepSeal.app/Contents/MacOS/SleepSeal -verify_arch arm64
+          lipo build/PowerControl -verify_arch arm64
           python3 - <<'PY'
           import pathlib, subprocess
           paths = subprocess.check_output(['git', 'ls-files', '-z']).decode().split('\0')
