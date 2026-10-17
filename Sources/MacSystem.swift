@@ -2,6 +2,7 @@ import AppKit
 import CoreWLAN
 import IOBluetooth
 import CoreGraphics
+import CoreBluetooth
 import Darwin
 
 struct GuardFailure: Error, CustomStringConvertible {
@@ -22,7 +23,7 @@ final class EventLog {
         let now = Date()
         if previous == message && now.timeIntervalSince(lastWrite) < 60 { return }
         previous = message; lastWrite = now
-        let data = Data("\(ISO8601DateFormatter().string(from: now)) \(message)\n".utf8)
+        let data = Data("\(ISO8601DateFormatter().string(from: now)) \(String(message.prefix(16_384)))\n".utf8)
         do {
             let fm = FileManager.default
             try fm.createDirectory(at: directory, withIntermediateDirectories: true,
@@ -127,42 +128,6 @@ final class JSONStore: GuardStore {
     }
 }
 
-enum PowerPolicy {
-    static let binaryKeys: Set<String> = ["powernap", "tcpkeepalive", "womp", "proximitywake"]
-
-    static func valid(_ value: PowerValue) -> Bool {
-        guard ["-b", "-c"].contains(value.scope) else { return false }
-        if value.key == "powermode" { return (0...2).contains(value.value) }
-        if value.key == "lowpowermode" || binaryKeys.contains(value.key) {
-            return (0...1).contains(value.value)
-        }
-        return false
-    }
-
-    static func desired(_ value: PowerValue) -> Int {
-        ["powermode", "lowpowermode"].contains(value.key) ? 1 : 0
-    }
-
-    // Parse each power source independently; preserve High Power Mode (2) too.
-    static func parse(_ text: String) -> [PowerValue] {
-        var scope: String?
-        var values: [PowerValue] = []
-        for raw in text.components(separatedBy: .newlines) {
-            let line = raw.trimmingCharacters(in: .whitespaces)
-            if line == "Battery Power:" { scope = "-b"; continue }
-            if line == "AC Power:" { scope = "-c"; continue }
-            if line.hasSuffix(":") { scope = nil; continue }
-            guard let source = scope else { continue }
-            let fields = line.split(whereSeparator: { $0.isWhitespace })
-            guard fields.count == 2, let number = Int(fields[1]) else { continue }
-            let value = PowerValue(scope: source, key: String(fields[0]), value: number)
-            if valid(value) { values.append(value) }
-        }
-        let modernSources = Set(values.filter { $0.key == "powermode" }.map(\.scope))
-        return values.filter { !($0.key == "lowpowermode" && modernSources.contains($0.scope)) }
-    }
-}
-
 final class BluetoothControl {
     typealias SetPower = @convention(c) (Int32) -> Void
     private let handle: UnsafeMutableRawPointer?
@@ -205,7 +170,20 @@ final class MacSystem: GuardSystem {
         return PowerPolicy.parse(result.output)
     }
 
+    func readRadios() -> (wifi: [String: Bool], bluetooth: Bool?) {
+        var wifi: [String: Bool] = [:]
+        for interface in wlan.interfaces() ?? [] {
+            if let name = interface.interfaceName { wifi[name] = interface.powerOn() }
+        }
+        return (wifi, bluetooth.read())
+    }
+
     func capture() throws -> Snapshot {
+        guard CBManager.authorization == .allowedAlways else { throw GuardFailure("Bluetooth permission is required / 需要蓝牙权限") }
+        try PrivilegedPowerTool.verifyAuthorization()
+        try PrivilegedPowerTool.claimProtection()
+        var captured = false
+        defer { if !captured { try? PrivilegedPowerTool.releaseProtection() } }
         let interfaces = wlan.interfaces() ?? []
         guard !interfaces.isEmpty else { throw GuardFailure("没有找到 Wi-Fi 接口") }
         var wifi: [String: Bool] = [:]
@@ -220,6 +198,7 @@ final class MacSystem: GuardSystem {
         guard values.contains(where: { ["powermode", "lowpowermode"].contains($0.key) }) else {
             throw GuardFailure("此设备没有可识别的低电量模式设置，停止操作")
         }
+        captured = true
         return Snapshot(wifi: wifi, bluetooth: bt, power: values)
     }
 
@@ -235,10 +214,7 @@ final class MacSystem: GuardSystem {
     private func setPower(_ value: PowerValue, to target: Int) throws {
         let request = PowerValue(scope: value.scope, key: value.key, value: target)
         guard PowerPolicy.valid(request) else { throw GuardFailure("拒绝未允许的电源参数") }
-        let result = try command("/usr/bin/sudo", ["-n", "/usr/bin/pmset", value.scope, value.key, String(target)])
-        guard result.status == 0 else {
-            throw GuardFailure("电源设置失败（\(value.scope) \(value.key)）：\(result.output.trimmingCharacters(in: .whitespacesAndNewlines))")
-        }
+        try PrivilegedPowerTool.set(scope: value.scope, key: value.key, value: target, restoring: true)
     }
 
     private func attempt(_ errors: inout [String], _ action: () throws -> Void) {
@@ -246,6 +222,8 @@ final class MacSystem: GuardSystem {
     }
 
     func suppress(_ snapshot: Snapshot) throws {
+        guard ConsoleSession.isConsoleOwner else { throw GuardFailure("This account is not the active console / 此账户不是当前控制台用户") }
+        try PrivilegedPowerTool.claimProtection()
         var errors: [String] = []
         for name in snapshot.wifi.keys.sorted() { attempt(&errors) { try setWiFi(name, false) } }
         if snapshot.bluetooth != nil { attempt(&errors) { try bluetooth.set(false) } }
@@ -269,6 +247,8 @@ final class MacSystem: GuardSystem {
     }
 
     func restore(_ snapshot: Snapshot) throws {
+        guard ConsoleSession.isConsoleOwner else { throw GuardFailure("This account is not the active console / 此账户不是当前控制台用户") }
+        try PrivilegedPowerTool.claimProtection()
         var errors: [String] = []
         // Restore power first, but attempt all restorations even if one fails.
         for value in snapshot.power { attempt(&errors) { try setPower(value, to: value.value) } }
@@ -287,6 +267,11 @@ final class MacSystem: GuardSystem {
 enum ConsoleSession {
     static var dictionary: [String: Any]? { CGSessionCopyCurrentDictionary() as? [String: Any] }
     static var locked: Bool { dictionary?["CGSSessionScreenIsLocked"] as? Bool == true }
+    static var isConsoleOwner: Bool {
+        guard let session = dictionary,
+              let uid = session[kCGSessionUserIDKey as String] as? NSNumber else { return false }
+        return uid.uint32Value == getuid() && session[kCGSessionOnConsoleKey as String] as? Bool == true
+    }
     static var verified: Bool {
         guard let session = dictionary,
               let uid = session[kCGSessionUserIDKey as String] as? NSNumber,

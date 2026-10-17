@@ -1,0 +1,48 @@
+#!/bin/sh
+set -eu
+[ "$(/usr/bin/id -u)" = 0 ] || exit 1
+console_uid=$(/usr/bin/stat -f '%u' /dev/console)
+case "$console_uid" in ''|*[!0-9]*) exit 1 ;; esac
+[ "$console_uid" -ge 500 ] || exit 1
+console_name=$(/usr/bin/id -nu "$console_uid")
+case "$console_name" in root|loginwindow|_mbsetupuser|'') exit 1 ;; esac
+
+helper=/Library/PrivilegedHelperTools/local.sleepseal.PowerControl
+record_directory='/Library/Application Support/SleepSeal/authorized-users'
+# pkgbuild's recommended ownership installs payload files as root. Avoid a
+# recursive ownership/permission walk over an existing application directory.
+[ "$(/usr/bin/stat -f '%u' /Applications/SleepSeal.app)" = 0 ] || exit 1
+[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' /Applications/SleepSeal.app/Contents/Info.plist)" = local.sleepseal.guard ] || exit 1
+/usr/sbin/chown root:wheel "$helper"
+/bin/chmod 0755 "$helper"
+/usr/bin/install -d -o root -g wheel -m 0755 "$record_directory"
+
+# Keep the old prototype rule until the new user process has acquired the guard
+# lock, recovered any pending cycle and explicitly finalized migration.
+rule="/private/etc/sudoers.d/sleepseal_v2_$console_uid"
+record="$record_directory/$console_uid"
+for path in "$rule" "$record"; do
+    [ ! -L "$path" ] || exit 1
+    if [ -e "$path" ]; then [ "$(/usr/bin/stat -f '%u' "$path")" = 0 ] || exit 1; fi
+done
+# The root-owned parser accepts fixed, independently validated arguments. This
+# grant does not allow pmset, a shell, arbitrary executable paths, or user files.
+rule_temporary=$(/usr/bin/mktemp /private/etc/sudoers.d/.sleepseal.XXXXXX)
+trap '/bin/rm -f "$rule_temporary"' EXIT HUP INT TERM
+/usr/bin/printf '# SleepSeal 0.2: fixed root-owned power-control parser only.\n#%s ALL=(root) NOPASSWD: %s check, %s claim, %s release, %s set *, %s restore *, %s finalize-migration, %s uninstall\n' \
+    "$console_uid" "$helper" "$helper" "$helper" "$helper" "$helper" "$helper" "$helper" > "$rule_temporary"
+/usr/sbin/chown root:wheel "$rule_temporary"
+/bin/chmod 0440 "$rule_temporary"
+/usr/sbin/visudo -cf "$rule_temporary" >/dev/null
+/bin/mv -f "$rule_temporary" "$rule"
+trap - EXIT HUP INT TERM
+/usr/bin/printf '%s\n' "$console_uid" > "$record"
+/usr/sbin/chown root:wheel "$record"
+/bin/chmod 0444 "$record"
+
+# Launch only the installed app as the verified console user. Its own ordinary
+# user process performs recovery, migration and LaunchAgent/configuration work.
+# Failure to open the UI leaves a usable app in Applications; Installer succeeds.
+/bin/launchctl asuser "$console_uid" /usr/bin/sudo -u "$console_name" \
+    /usr/bin/open -a /Applications/SleepSeal.app --args --install-user || true
+exit 0

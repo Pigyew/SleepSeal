@@ -1,12 +1,18 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")"
-mkdir -p build/cache build/SleepSeal.app/Contents/MacOS
-/usr/bin/xcrun swiftc -swift-version 5 -O -target "$(uname -m)-apple-macosx13.0" \
-  -module-cache-path "$PWD/build/cache" \
-  Sources/StateMachine.swift Sources/SleepTransitions.swift Sources/HotCorners.swift Sources/MacSystem.swift Sources/Main.swift \
-  -framework AppKit -framework CoreWLAN -framework IOBluetooth -framework CoreBluetooth -framework IOKit \
+mkdir -p build/cache build/SleepSeal.app/Contents/{MacOS,Resources}
+/usr/bin/xcrun swiftc -swift-version 5 -O -parse-as-library -target "$(uname -m)-apple-macosx13.0" \
+  -module-cache-path "$PWD/build/cache" Sources/*.swift UI/*.swift \
+  -framework AppKit -framework SwiftUI -framework CoreWLAN -framework IOBluetooth \
+  -framework CoreBluetooth -framework IOKit -framework Security \
   -o build/SleepSeal.app/Contents/MacOS/SleepSeal
 /bin/cp Resources/Info.plist build/SleepSeal.app/Contents/Info.plist
+for resource in Resources/*.lproj; do /bin/cp -R "$resource" build/SleepSeal.app/Contents/Resources/; done
 /usr/bin/codesign --force --sign - build/SleepSeal.app
-echo '已生成 build/SleepSeal.app（本机架构，本地临时签名）。'
+/usr/bin/xcrun swiftc -swift-version 5 -O -parse-as-library -target "$(uname -m)-apple-macosx13.0" \
+  -module-cache-path "$PWD/build/cache" Helper/PowerControl.swift -o build/PowerControl
+/usr/bin/codesign --force --sign - build/PowerControl
+/usr/bin/codesign --verify --strict build/SleepSeal.app
+/usr/bin/codesign --verify --strict build/PowerControl
+printf '%s\n' 'Built SleepSeal 0.2.0 Beta (ad-hoc signed; not notarized).'

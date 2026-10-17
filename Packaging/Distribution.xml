@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+  <title>SleepSeal 0.2.0 Beta</title>
+  <organization>org.pigyew.sleepseal</organization>
+  <welcome file="Welcome.html" mime-type="text/html"/>
+  <license file="License.txt" mime-type="text/plain"/>
+  <conclusion file="Conclusion.html" mime-type="text/html"/>
+  <options customize="never" require-scripts="true" hostArchitectures="arm64"/>
+  <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
+  <allowed-os-versions><os-version min="13.0"/></allowed-os-versions>
+  <choices-outline><line choice="default"/></choices-outline>
+  <choice id="default" visible="false" title="SleepSeal"><pkg-ref id="org.pigyew.sleepseal"/></choice>
+  <pkg-ref id="org.pigyew.sleepseal" version="0.2.0" onConclusion="none">SleepSeal-component.pkg</pkg-ref>
+</installer-gui-script>

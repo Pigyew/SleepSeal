@@ -1,0 +1,47 @@
+#!/bin/sh
+set -eu
+
+# Installer runs this script as root. No user-owned source or configuration is
+# read or executed, and no file in a user's home directory is changed here.
+[ "$(/usr/bin/id -u)" = 0 ] || exit 1
+console_uid=$(/usr/bin/stat -f '%u' /dev/console)
+case "$console_uid" in ''|*[!0-9]*) exit 1 ;; esac
+[ "$console_uid" -ge 500 ] || {
+    /bin/echo 'Log in to the Mac account that will use SleepSeal before installing.' >&2
+    exit 1
+}
+console_name=$(/usr/bin/id -nu "$console_uid")
+case "$console_name" in root|loginwindow|_mbsetupuser|'') exit 1 ;; esac
+[ -d /Applications ] && [ ! -L /Applications ] || exit 1
+[ "$(/usr/bin/stat -f '%u' /Applications)" = 0 ] || exit 1
+
+# The helper must never be installed below a symlink or writable directory.
+for directory in /Library /Library/PrivilegedHelperTools '/Library/Application Support'; do
+    [ ! -L "$directory" ] || exit 1
+    if [ -e "$directory" ]; then
+        [ -d "$directory" ] || exit 1
+        [ "$(/usr/bin/stat -f '%u' "$directory")" = 0 ] || exit 1
+        permissions=$(/usr/bin/stat -f '%Lp' "$directory")
+        [ "$((0$permissions & 0022))" = 0 ] || exit 1
+    fi
+done
+for path in /Library/PrivilegedHelperTools/local.sleepseal.PowerControl '/Library/Application Support/SleepSeal' '/Library/Application Support/SleepSeal/authorized-users'; do
+    [ ! -L "$path" ] || exit 1
+    if [ -e "$path" ]; then
+        [ "$(/usr/bin/stat -f '%u' "$path")" = 0 ] || exit 1
+        permissions=$(/usr/bin/stat -f '%Lp' "$path")
+        [ "$((0$permissions & 0022))" = 0 ] || exit 1
+    fi
+done
+[ ! -L /Applications/SleepSeal.app ] || exit 1
+if [ -e /Applications/SleepSeal.app ]; then
+    [ -d /Applications/SleepSeal.app ] || exit 1
+    [ "$(/usr/bin/stat -f '%u' /Applications/SleepSeal.app)" = 0 ] || {
+        /bin/echo 'Move the existing user-owned SleepSeal app out of /Applications, then run this installer again.' >&2
+        exit 1
+    }
+    permissions=$(/usr/bin/stat -f '%Lp' /Applications/SleepSeal.app)
+    [ "$((0$permissions & 0022))" = 0 ] || exit 1
+    [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' /Applications/SleepSeal.app/Contents/Info.plist)" = local.sleepseal.guard ] || exit 1
+fi
+exit 0
