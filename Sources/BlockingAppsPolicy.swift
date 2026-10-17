@@ -78,6 +78,7 @@ enum BlockingAppsResetReason {
 /// before the adapter sends it, so an app refusing to quit or showing a save
 /// dialog is not prompted again every ten seconds. All calls use monotonic time.
 final class BlockingAppsCoordinator {
+    static let maximumBatchSize = 32
     private struct ProcessKey: Hashable {
         let pid: Int32
         let uid: UInt32
@@ -124,7 +125,8 @@ final class BlockingAppsCoordinator {
         activeBatch = id
         // Bound one event's UI work even if a malicious assertion source returns
         // thousands of duplicate or unrelated entries.
-        return BlockingAppsBatch(id: id, deadline: time + budget, startedAt: time, applications: Array(candidates.prefix(32)))
+        return BlockingAppsBatch(id: id, deadline: time + budget, startedAt: time,
+                                 applications: Array(candidates.prefix(Self.maximumBatchSize)))
     }
 
     /// Call immediately before the normal quit request with a fresh identity

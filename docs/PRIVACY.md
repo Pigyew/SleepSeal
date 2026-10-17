@@ -12,14 +12,17 @@ The optional app quit-request setting is off by default. When enabled, SleepSeal
 |---|---|
 | `~/Library/Application Support/SleepSeal/configuration.json` | Your selected language, trigger rules, pause, startup preferences and optional app quit-request preference. |
 | `~/Library/Application Support/SleepSeal/pending.json` | Original radio/temporary power settings and the active recovery gate. Do not delete this while recovery is pending. |
-| `~/Library/Application Support/SleepSeal/power-preferences.json` | First original and last app-written persistent power settings; separate from the sleep snapshot. |
+| `~/Library/Application Support/SleepSeal/power-preferences.json` | First original, last confirmed persistent power value, and optional pending write intent/phase; separate from the sleep snapshot. |
 | `~/Library/Logs/SleepSeal/` | Local status, errors and rotating logs; no automatic upload. |
 | `~/Library/LaunchAgents/local.sleepseal.guard.plist` | Current user's background startup configuration. |
+| `~/Library/LaunchAgents/local.sleepseal.guard.plist.uninstall-staged` | Temporary same-user startup backup during uninstall; restored on precommit failure and removed during final cleanup. |
 | `/Library/Application Support/SleepSeal/authorized-users/<uid>` | Root-owned numeric authorization record for the narrow helper. |
 | `/Library/Application Support/SleepSeal/protection-owner` and `protection-lock` | Root-owned numeric UID and lock that prevent overlapping protection by different accounts. |
 | `/private/etc/sudoers.d/sleepseal_v2_<uid>` | Root-owned permission rule for that user; a legacy `sleepseal_<uid>` rule is retained until safe migration completes. |
 
 Recovery/configuration files are user-private. Logs rotate at 1 MiB per file and retain three files. Uninstall preserves user diagnostics/settings files, and removes only the relevant startup/installation components after safe recovery. The separate original-power restore action controls persistent system settings.
+
+Damaged or future-version optional settings are preserved in place. Recovery-only startup does not replace them with defaults. Pending write intent contains only power-setting values and operation phases; it introduces no application or device identity collection. 卸载暂存只保存当前用户原启动配置；损坏或版本过新的可选设置原样保留。新增写入意图只含电源值和操作阶段，不增加应用或设备身份收集。
 
 ## Sharing diagnostics
 

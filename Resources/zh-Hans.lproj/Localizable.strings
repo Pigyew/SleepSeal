@@ -218,3 +218,6 @@
 "blockers.timedOut" = "等待已结束，尚未退出的应用保持运行。";
 "blockers.status.none" = "未找到符合正常退出请求条件的应用。";
 "blockers.status.busy" = "正在等待应用响应正常退出请求…";
+"uninstall.cleanup.help" = "SleepSeal 授权已移除，保护已停止。请重试完成登录服务清理，或退出应用。已恢复的连接会保持可用。";
+"uninstall.cleanup.retry" = "完成卸载清理";
+"uninstall.cleanup.title" = "卸载尚需最后清理";

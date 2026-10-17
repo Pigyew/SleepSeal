@@ -44,6 +44,14 @@ Native control ownership is intentional: operating-system popup geometry, focus,
 
 Onboarding preselects all methods and enables nothing before confirmation. “Set up later” closes the sheet; overview keeps an Enable protection button. Existing-user migration is handled by the controller and preserves All. Closing the dashboard leaves the menu bar owner running.
 
+“Set up later” is remembered for this process, including subsequent refreshes. Explicit Enable protection reopens setup. Damaged app settings or a damaged persistent-power backup put the app into recovery-only operation: preserve the original files, do not offer setup or new protection/power writes, and keep verified recovery of a valid pending snapshot available. Ordinary launch/service repair must not require successfully decoding optional settings first.
+
+Diagnostic refresh errors clear after the corresponding read succeeds. A diagnostic success must not erase an unresolved startup or recovery error. Unlock callbacks carry a receipt-time fence; new sleep or re-lock invalidates queued callbacks before they can resolve a newer recovery gate.
+
+Uninstall stages this user's startup file before privileged removal. Precommit failure restores the staged file. After privileged removal commits, only final user-service cleanup can be retried; protection/configuration stay disabled and the panel offers Finish uninstall cleanup. Quit/uninstall retain their control freeze even if the app-quit preference is disabled. During busy operations, immediate opt-out saving is available only for manual sleep preparation.
+
+Pending protection and visible-dashboard checks retain a 10-second interval. A stable hidden dashboard uses 60-second diagnostic checks; opening it requests an immediate refresh. Pointer motion only submits corner occupancy transitions, reads current corner preferences at that boundary, and never records a pointer trail.
+
 The overview separates measured radio/power states from policy. Unknown readings remain explicitly unknown, never assumed off. Last trigger and recovery keep independent result text. The panel and menu use consistent action labels through `L10n`.
 
 Custom selection allows all 16 trigger combinations, including empty. Empty has an explanation. Hot-corner configuration is read-only; only actual display-sleep corners are selectable. The map includes all four actual corner actions and modifier symbols. Opening system settings never writes Dock preferences.

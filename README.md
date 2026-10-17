@@ -2,6 +2,8 @@
 
 # SleepSeal
 
+Development now targets **0.2.2 Beta** with recovery, lifecycle and background-work reliability fixes. The public download links below remain on 0.2.1 until a new tag is published. See [reliability changes and validation](docs/RELIABILITY.md).
+
 [![macOS Beta checks](https://github.com/Pigyew/SleepSeal/actions/workflows/ci.yml/badge.svg)](https://github.com/Pigyew/SleepSeal/actions/workflows/ci.yml)
 [简体中文](README.zh-CN.md) · [Download 0.2.1 Beta](https://github.com/Pigyew/SleepSeal/releases/tag/v0.2.1) · [MIT license](LICENSE)
 

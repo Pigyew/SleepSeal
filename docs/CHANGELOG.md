@@ -1,5 +1,17 @@
 # Changelog / 更新记录
 
+## 0.2.2 Beta — unreleased / 尚未发布
+
+- Journal pending persistent writes separately from the last confirmed value, including rollback. Old backup arrays remain readable; interrupted repeated edits and restoration remain recoverable without overwriting external changes.
+- Keep a valid transient recovery engine available when app settings or the separate persistent-power backup are damaged or use a future schema. Preserve those files, pause new protection/edits, and permit verified recovery. Service repair startup also tolerates damaged app settings.
+- Separate current diagnostic failures from unresolved operation/startup failures. Defer setup for the current process without re-opening it on every refresh.
+- Stage user startup files before privileged uninstall; roll back before commit and retry cleanup alone after commit. Freeze configuration and protection for the whole uninstall/quit lifecycle.
+- Process manual quit preparation in batches under one 8-second deadline, with a final complete inventory before sleep. Keep actual-sleep preparation at its existing 2-second best-effort limit.
+- Refresh stable hidden diagnostics every 60 seconds, retain 10-second pending/visible checks, cache capability/authorization display reads, and submit pointer work only on corner occupancy changes. Re-read corner configuration at those transitions and at actual sleep; fence delayed unlock callbacks at notification receipt.
+- Add headless dashboard, startup/recovery, queued-event and uninstall integration tests; sandbox installer failures; validate bilingual format arguments. Centralize VERSION, check clean build/package provenance, and publish only the package from the successful tag workflow. GUI checks have an explicit logged-in-runner workflow.
+
+修复恢复日志中断窗口、损坏配置阻断连接恢复、旧错误残留及向导反复出现；卸载改为可回滚暂存和提交后独立清理。手动退出准备完整检查所有批次，后台减少重复命令和指针任务。补充组合回归、安装故障测试、双语格式检查及构建来源验证。仍为未公证 Beta，未声称新增实机兼容或过夜省电验证。
+
 ## 0.2.1 Beta — 2026-10-17
 
 - Add an optional, default-off request to normally quit eligible sleep-blocking apps belonging to the current console user. Enabling requires a bilingual confirmation; system services are excluded, save prompts and refusals are respected, and exited apps are not automatically relaunched. No force-quit operation is offered.

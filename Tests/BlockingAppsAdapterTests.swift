@@ -14,22 +14,30 @@ private final class FakeBlockingHost: BlockingAppsHost {
     var requested: [BlockingAppIdentity] = []
     var assertionReads = 0
     var failAssertionRead = Set<Int>()
+    var beforeAssertionRead: (() throws -> Void)?
+    var beforeApplicationRead: (() -> Void)?
     var beforeMain: (() -> Void)?
     var beforeQuit: (() -> Void)?
     var whileWaiting: (() -> Void)?
     var acceptQuit = true
+    var refusedPIDs = Set<Int32>()
     var exitAfterRequest = true
     var delayedMain = false
     var queued: [() -> Void] = []
     var mainDispatches = 0
+    var mainDeadlines: [TimeInterval] = []
     func now() -> TimeInterval { time }
     func isConsoleOwner() -> Bool { console }
     func activeAssertions() throws -> [BlockingSleepAssertion] {
         assertionReads += 1
+        try beforeAssertionRead?()
         if failAssertionRead.contains(assertionReads) { throw FakeProbeError.unavailable }
         return assertions
     }
-    func application(pid: Int32) -> BlockingAppIdentity? { applications[pid] }
+    func application(pid: Int32) -> BlockingAppIdentity? {
+        beforeApplicationRead?()
+        return applications[pid]
+    }
     func presence(of identity: BlockingAppIdentity) -> BlockingProcessPresence {
         if unknownPresence.contains(identity.pid) { return .unknown }
         guard let current = applications[identity.pid] else { return .gone }
@@ -39,15 +47,16 @@ private final class FakeBlockingHost: BlockingAppsHost {
         beforeQuit?()
         guard permitted(), console, let current = applications[identity.pid],
               BlockingAppsPolicy.sameProcess(identity, current) else { return false }
-        if acceptQuit {
+        if acceptQuit && !refusedPIDs.contains(identity.pid) {
             requested.append(identity)
             if exitAfterRequest { applications.removeValue(forKey: identity.pid) }
         }
-        return acceptQuit
+        return acceptQuit && !refusedPIDs.contains(identity.pid)
     }
     func onMain(deadline: TimeInterval, cancelled: @escaping () -> Bool,
                 action: @escaping (@escaping () -> Bool) -> BlockingQuitAttempt) -> BlockingQuitAttempt {
         mainDispatches += 1
+        mainDeadlines.append(deadline)
         let gate = BlockingMainQuitGate()
         let permitted = { gate.permitted && self.time < deadline && !cancelled() }
         if delayedMain {
@@ -268,6 +277,88 @@ private struct BlockingAppsAdapterTests {
         let tokenResult = run(tokenHost, cancelled: { cancellation.isCancelled(token) })
         check(tokenResult.cancelled && tokenHost.requested.isEmpty,
               "A real thread-safe cancellation epoch cancels the injected main-thread request")
+
+        let manyApps = (201...233).map { app(Int32($0)) }
+        let manyHost = host(manyApps)
+        let many = BlockingApps.prepareForManualSleep(host: manyHost, deadline: 108, cancelled: { false })
+        check(many.canProceedWithSleep && many.candidateCount == 33 && many.requestedCount == 33
+              && many.terminatedCount == 33 && many.remainingCount == 0,
+              "Manual preparation accounts for all 33 blockers across bounded batches")
+        check(Set(manyHost.requested.map(\.pid)).count == 33 && manyHost.mainDeadlines.allSatisfy { $0 == 108 },
+              "Every blocker receives at most one request under the original shared deadline")
+
+        let lastRefusedHost = host(manyApps); lastRefusedHost.refusedPIDs = [233]
+        let lastRefused = BlockingApps.prepareForManualSleep(host: lastRefusedHost, deadline: 108, cancelled: { false })
+        check(!lastRefused.canProceedWithSleep && lastRefused.requestedCount == 32
+              && lastRefused.remainingApps.map(\.pid) == [233] && lastRefusedHost.mainDispatches == 33,
+              "A refused 33rd blocker prevents manual sleep after the first batch exits")
+
+        let budgetHost = host((201...240).map { app(Int32($0)) })
+        budgetHost.beforeQuit = { budgetHost.time += 0.21 }
+        let budget = BlockingApps.prepareForManualSleep(host: budgetHost, deadline: 108, cancelled: { false })
+        check(!budget.canProceedWithSleep && budget.timedOut && budget.requestedCount >= 32
+              && budget.requestedCount < 40 && budget.remainingCount > 0,
+              "A later batch cannot restart the eight-second total preparation budget")
+        check(budgetHost.mainDeadlines.allSatisfy { $0 == 108 }, "All batches retain the same absolute deadline")
+
+        var manualCancelled = false
+        let cancelledManyHost = host(manyApps)
+        cancelledManyHost.beforeMain = { if cancelledManyHost.requested.count == 32 { manualCancelled = true } }
+        let cancelledMany = BlockingApps.prepareForManualSleep(host: cancelledManyHost, deadline: 108,
+            cancelled: { manualCancelled })
+        check(!cancelledMany.canProceedWithSleep && cancelledMany.cancelled && cancelledMany.requestedCount == 32
+              && cancelledMany.remainingApps.map(\.pid) == [233],
+              "Cancellation between batches prevents the remaining request and manual sleep")
+
+        let cancelledScanHost = host([])
+        manualCancelled = false
+        cancelledScanHost.beforeAssertionRead = { manualCancelled = true }
+        let cancelledScan = BlockingApps.prepareForManualSleep(host: cancelledScanHost, deadline: 108,
+            cancelled: { manualCancelled })
+        check(cancelledScan.cancelled && !cancelledScan.canProceedWithSleep && cancelledScanHost.requested.isEmpty,
+              "Cancellation during an empty final inventory cannot authorize sleep")
+
+        let partialScanHost = host(manyApps)
+        partialScanHost.beforeApplicationRead = { partialScanHost.time += 0.4 }
+        let partialScan = BlockingApps.prepareForManualSleep(host: partialScanHost, deadline: 108, cancelled: { false })
+        check(partialScan.timedOut && !partialScan.canProceedWithSleep && partialScanHost.requested.isEmpty,
+              "An inventory cut short by the deadline is not a complete successful scan")
+        let expiredEmptyHost = host([])
+        expiredEmptyHost.beforeAssertionRead = { expiredEmptyHost.time = 108 }
+        let expiredEmpty = BlockingApps.prepareForManualSleep(host: expiredEmptyHost, deadline: 108, cancelled: { false })
+        check(expiredEmpty.timedOut && !expiredEmpty.canProceedWithSleep,
+              "An empty inventory that finishes at the deadline still fails closed")
+
+        let newBlockerHost = host(Array(manyApps.prefix(32)))
+        var addedBlocker = false
+        newBlockerHost.beforeAssertionRead = {
+            if newBlockerHost.requested.count == 32 && !addedBlocker {
+                addedBlocker = true
+                let newcomer = app(999)
+                newBlockerHost.applications[999] = newcomer
+                newBlockerHost.assertions.append(BlockingSleepAssertion(pid: 999, kind: .display))
+            }
+        }
+        newBlockerHost.refusedPIDs = [999]
+        let newBlocker = BlockingApps.prepareForManualSleep(host: newBlockerHost, deadline: 108, cancelled: { false })
+        check(!newBlocker.canProceedWithSleep && newBlocker.candidateCount == 33
+              && newBlocker.remainingApps.map(\.pid) == [999] && newBlockerHost.mainDispatches == 33,
+              "Final full inventory catches a newly blocking app outside the initial candidate list")
+
+        let failedFinalHost = host()
+        failedFinalHost.beforeAssertionRead = {
+            if !failedFinalHost.requested.isEmpty { throw FakeProbeError.unavailable }
+        }
+        let failedFinal = BlockingApps.prepareForManualSleep(host: failedFinalHost, deadline: 108, cancelled: { false })
+        check(failedFinal.error != nil && !failedFinal.canProceedWithSleep && failedFinal.terminatedCount == 1,
+              "Failure of the final full inventory cannot be hidden by a successful batch")
+
+        let savingManualHost = host(); savingManualHost.exitAfterRequest = false
+        savingManualHost.beforeQuit = { savingManualHost.assertions = [] }
+        let savingManual = BlockingApps.prepareForManualSleep(host: savingManualHost, deadline: 108, cancelled: { false })
+        check(!savingManual.canProceedWithSleep && savingManual.remainingCount == 1
+              && savingManual.requestedCount == 1 && savingManualHost.mainDispatches == 1,
+              "An app that releases its assertion for a save prompt remains unresolved without repeated requests")
         print("PASS: blocking-app adapter typed assertions, guarded normal quit and real-outcome simulation — \(checks) checks; no real apps were queried or quit")
     }
 }

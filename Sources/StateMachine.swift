@@ -119,8 +119,9 @@ final class SleepGuard {
         pending = state
     }
 
-    /// Record this once for a real unlock notification. The gate ID is captured
-    /// when the notification arrives, so queued work cannot unlock a new cycle.
+    /// Record this once for a real unlock notification. Adapters must fence the
+    /// notification at receipt before resolving this ID on the state queue, so
+    /// queued work cannot unlock a new cycle.
     /// A slow console update is retried by reconcile instead of a short timer.
     func observedUnlock(gateID: UUID, sessionVerified: Bool, observedAt: Date = Date()) throws {
         guard var state = pending, state.id == gateID, state.sawLock else { return }

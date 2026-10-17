@@ -12,6 +12,20 @@ private final class MemoryPowerStore: PowerPreferencesStore {
     }
 }
 
+/// Only test fixtures are written. Abrupt child exit bypasses the manager's
+/// catch/rollback path so restarting exercises the actual persisted journal.
+private final class InterruptingPowerStore: PowerPreferencesStore {
+    let disk: JSONPowerPreferencesStore
+    var afterSave: (([PowerPreferenceBackup], [PowerPreferenceBackup]) -> Void)?
+    init(directory: URL) throws { disk = try JSONPowerPreferencesStore(directory: directory) }
+    func load() throws -> [PowerPreferenceBackup] { try disk.load() }
+    func save(_ records: [PowerPreferenceBackup]) throws {
+        let previous = try disk.load()
+        try disk.save(records)
+        afterSave?(previous, records)
+    }
+}
+
 private final class MockPowerAdapter: PowerPreferencesAdapter {
     var snapshot: PowerPreferencesSnapshot
     var writes: [(PowerPreferenceValue, Bool)] = []
@@ -40,7 +54,65 @@ private final class MockPowerAdapter: PowerPreferencesAdapter {
 
 @main
 private struct PowerPreferencesTests {
+    static let interruptionStatus: Int32 = 86
+    static func interruptedChild(directory: URL, scenario: String) throws {
+        let parts = scenario.split(separator: ":").map(String.init)
+        let operation = parts[0], boundary = parts[1]
+        let battery = PowerPreferenceValue(source: .battery, key: .displaySleep, value: 5)
+        let adapterValue = PowerPreferenceValue(source: .adapter, key: .displaySleep, value: 0)
+        let adapter = MockPowerAdapter(PowerPreferencesSnapshot(values: [battery, adapterValue]))
+        let store = try InterruptingPowerStore(directory: directory)
+        let observedURL = directory.appendingPathComponent("observed.json")
+        func saveObserved() throws { try JSONEncoder().encode(adapter.snapshot).write(to: observedURL, options: .atomic) }
+        try saveObserved()
+        adapter.afterWrite = { _, _ in try! saveObserved() }
+        let manager = try PowerPreferencesManager(adapter: adapter, store: store)
+        if operation != "initial" {
+            _ = try manager.apply([PowerPreferenceEdit(original: battery, target: 30)], guardPending: false)
+        }
+        let phase: PowerPreferenceWritePhase = operation == "restore" ? .restoring
+            : operation == "rollback" ? .rollingBack : .applying
+        store.afterSave = { previous, current in
+            let old = previous.first { $0.original.id == battery.id }
+            let new = current.first { $0.original.id == battery.id }
+            if boundary == "prepared", new?.pendingWrite?.phase == phase {
+                exit(interruptionStatus)
+            }
+            if boundary == "committed", old?.pendingWrite?.phase == phase, new?.pendingWrite == nil {
+                exit(interruptionStatus)
+            }
+        }
+        adapter.afterWrite = { _, _ in
+            try! saveObserved()
+            if boundary == "written",
+               try! store.load().first(where: { $0.original.id == battery.id })?.pendingWrite?.phase == phase {
+                exit(interruptionStatus)
+            }
+        }
+        switch operation {
+        case "initial":
+            _ = try manager.apply([PowerPreferenceEdit(original: battery, target: 30)], guardPending: false)
+        case "repeat":
+            _ = try manager.apply([PowerPreferenceEdit(original: battery.replacingValue(30), target: 60)], guardPending: false)
+        case "restore":
+            _ = try manager.restoreOriginals(guardPending: false)
+        case "rollback":
+            adapter.failWriteNumbers = [adapter.writes.count + 2]
+            _ = try manager.apply([
+                PowerPreferenceEdit(original: battery.replacingValue(30), target: 60),
+                PowerPreferenceEdit(original: adapterValue, target: 90)
+            ], guardPending: false)
+        default: preconditionFailure("Unknown interruption scenario")
+        }
+        preconditionFailure("Interruption checkpoint was not reached: \(scenario)")
+    }
+
     static func main() throws {
+        if CommandLine.arguments.count == 4, CommandLine.arguments[1] == "--interrupt-journal" {
+            try interruptedChild(directory: URL(fileURLWithPath: CommandLine.arguments[2]),
+                                 scenario: CommandLine.arguments[3])
+            return
+        }
         var checks = 0
         func check(_ condition: @autoclosure () -> Bool, _ name: String) {
             precondition(condition(), name); checks += 1
@@ -93,6 +165,7 @@ private struct PowerPreferencesTests {
         check(store.records.count == 2 && store.records.first?.original == originalBattery, "Durable first original saved separately")
         _ = try manager.apply([PowerPreferenceEdit(original: originalBattery.replacingValue(0), target: 60)], guardPending: false)
         check(store.records.first?.original == originalBattery && store.records.first?.lastWritten == 60, "Repeated edit retains first baseline")
+        check(store.records.allSatisfy { $0.pendingWrite == nil }, "Successful readback commits every write intention")
 
         rejects("Reject out-of-range new timer") {
             _ = try manager.apply([PowerPreferenceEdit(original: originalBattery.replacingValue(60), target: 1441)], guardPending: false)
@@ -213,14 +286,80 @@ private struct PowerPreferencesTests {
         check(!interrupted.succeeded && interrupted.actual.matching(originalBattery)?.value == 31, "Rollback preserves external change after failed readback")
         check(!externalStore.records.isEmpty, "Incomplete rollback retains recovery journal")
 
+        let commitFailureAdapter = MockPowerAdapter(parsed)
+        let commitFailureStore = MemoryPowerStore()
+        let commitFailureManager = try PowerPreferencesManager(adapter: commitFailureAdapter, store: commitFailureStore)
+        commitFailureAdapter.afterWrite = { _, number in
+            if number == 1 { commitFailureStore.failNextSave = true }
+        }
+        let commitFailure = try commitFailureManager.apply([
+            PowerPreferenceEdit(original: originalBattery, target: 30)
+        ], guardPending: false)
+        check(!commitFailure.succeeded && commitFailure.actual == parsed && commitFailureStore.records.isEmpty,
+              "Failed confirmation save rolls the OS value back and preserves the previous journal")
+
         let temp = FileManager.default.temporaryDirectory.appendingPathComponent("SleepSeal-power-tests-\(UUID())")
         defer { try? FileManager.default.removeItem(at: temp) }
         let disk = try JSONPowerPreferencesStore(directory: temp)
+        let legacyJSON = """
+        [{"original":{"source":"-b","key":"displaysleep","value":5},"lastWritten":30}]
+        """
+        try Data(legacyJSON.utf8).write(to: disk.url, options: .atomic)
+        let legacyBackup = try disk.load()
+        check(legacyBackup == [PowerPreferenceBackup(original: originalBattery, lastWritten: 30)],
+              "Existing array backups decode without a pending-write field")
         try disk.save([PowerPreferenceBackup(original: originalBattery, lastWritten: 30)])
         let reloaded = try disk.load()
         check(reloaded == [PowerPreferenceBackup(original: originalBattery, lastWritten: 30)], "Backup survives process restart")
         let permissions = try FileManager.default.attributesOfItem(atPath: disk.url.path)[.posixPermissions] as? NSNumber
         check(permissions?.intValue == 0o600, "Durable backup is private")
+
+        for operation in ["initial", "repeat", "restore", "rollback"] {
+            for boundary in ["prepared", "written", "committed"] {
+                let scenario = "\(operation):\(boundary)"
+                let directory = temp.appendingPathComponent("interruption-\(operation)-\(boundary)")
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                let child = Process()
+                child.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
+                child.arguments = ["--interrupt-journal", directory.path, scenario]
+                try child.run(); child.waitUntilExit()
+                check(child.terminationReason == .exit && child.terminationStatus == interruptionStatus,
+                      "Child exited at the durable \(scenario) checkpoint")
+                let interruptedDisk = try JSONPowerPreferencesStore(directory: directory)
+                let journal = try interruptedDisk.load()
+                let observed = try JSONDecoder().decode(PowerPreferencesSnapshot.self,
+                    from: Data(contentsOf: directory.appendingPathComponent("observed.json")))
+                let backup = journal.first { $0.original.id == originalBattery.id }!
+                let expectedPhase: PowerPreferenceWritePhase = operation == "restore" ? .restoring
+                    : operation == "rollback" ? .rollingBack : .applying
+                if boundary == "committed" {
+                    check(backup.pendingWrite == nil && backup.lastWritten == observed.matching(originalBattery)?.value,
+                          "\(scenario) durably commits only a verified value")
+                } else {
+                    let expectedCommitted = operation == "initial" ? 5 : operation == "rollback" ? 60 : 30
+                    check(backup.lastWritten == expectedCommitted && backup.pendingWrite?.phase == expectedPhase,
+                          "\(scenario) retains the last confirmed value and interruption phase")
+                }
+                let resumedAdapter = MockPowerAdapter(observed)
+                let resumed = try PowerPreferencesManager(adapter: resumedAdapter, store: interruptedDisk)
+                let recovered = try resumed.restoreOriginals(guardPending: false)
+                check(recovered.succeeded && recovered.actual.matching(originalBattery) == originalBattery,
+                      "Restart after \(scenario) restores the first original")
+                let remaining = try interruptedDisk.load()
+                check(remaining.isEmpty, "Restart after \(scenario) clears completed backups")
+
+                // A value matching neither side of a recorded write is still
+                // external, even when a transaction was interrupted.
+                let externalSnapshot = MockPowerAdapter(observed)
+                externalSnapshot.replace(originalBattery.replacingValue(77))
+                let conflictStore = MemoryPowerStore(); conflictStore.records = journal
+                let conflictManager = try PowerPreferencesManager(adapter: externalSnapshot, store: conflictStore)
+                let conflict = try conflictManager.restoreOriginals(guardPending: false)
+                check(!conflict.succeeded && conflict.actual.matching(originalBattery)?.value == 77
+                      && externalSnapshot.writes.isEmpty && !conflictStore.records.isEmpty,
+                      "Restart after \(scenario) preserves a genuine external value and its backup")
+            }
+        }
         print("PASS: persistent power preferences, CAS, rollback and recovery — \(checks) checks")
     }
 }

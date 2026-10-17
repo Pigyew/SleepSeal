@@ -12,6 +12,9 @@ enum RuntimeErrorPresentation {
     }
 
     private static let rules: [Rule] = [
+        Rule(id: "savedSettings", phrases: ["saved app settings need repair", "saved power settings need repair"],
+             english: "Saved settings need repair. New protection and power edits are paused. You can still restore connections from a valid recovery record in Check & restore. The saved files have been preserved.",
+             chinese: "保存的设置需要修复，已暂停新的保护和电源编辑。你仍可在“检查与恢复”中使用有效的恢复记录恢复连接。原文件已保留。"),
         Rule(id: "blockingApps", phrases: ["some apps have not quit", "部分应用尚未退出"],
              english: "Some apps have not quit. Handle their save prompts or cancel, then retry sleep. SleepSeal has not forced them to quit or disconnected the radios for this request.",
              chinese: "部分应用尚未退出。请处理保存提示或取消后，再重试睡眠。SleepSeal 没有强制退出应用，也没有为此次请求关闭无线连接。"),

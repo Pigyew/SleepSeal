@@ -127,7 +127,11 @@ final class DashboardModel: ObservableObject {
     @Published var isEnabled = false
     @Published var isPaused = false
     @Published var isBusy = false
+    @Published var canCancelSleepPreparation = false
     @Published var serviceAvailable = true
+    @Published var settingsReady = true
+    @Published var powerPreferencesReady = true
+    @Published var uninstallCleanupPending = false
     @Published var guardPending = false
     @Published var loginEnabled = false
     @Published var quitBlockingApps = false
@@ -157,17 +161,46 @@ final class DashboardModel: ObservableObject {
     @Published var permissions: [UIPermission] = []
     @Published var sleepBlockers: [String] = []
     @Published var blockersLoaded = false
-    @Published var appVersion = "0.2.1 Beta"
+    @Published var appVersion = DashboardModel.versionLabel(infoDictionary: Bundle.main.infoDictionary)
+    private var onboardingCompleted = false
+    private var onboardingDeferred = false
+    private var onboardingCanConfigure = true
     var onAction: ((DashboardAction) -> Void)?
 
     func text(_ key: String) -> String { L10n.text(key, language: language) }
     func send(_ action: DashboardAction) { onAction?(action) }
     var policyDirty: Bool { policy != savedPolicy }
-    var canUseActions: Bool { serviceAvailable && !isBusy && isEnabled && !onboardingRequired }
+    var canUseActions: Bool { serviceAvailable && settingsReady && !isBusy && isEnabled && !onboardingRequired }
     var powerDirty: Bool { !powerDrafts.isEmpty }
 
+    static func versionLabel(infoDictionary: [String: Any]?) -> String {
+        guard let value = infoDictionary?["CFBundleShortVersionString"] as? String,
+              !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "Development" }
+        return value.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Automatic refresh can offer setup once per process. A dismissed offer
+    /// stays dismissed until an explicit request, without completing setup.
+    func updateOnboarding(completed: Bool, canConfigure: Bool = true) {
+        onboardingCompleted = completed
+        onboardingCanConfigure = canConfigure
+        if completed { onboardingDeferred = false }
+        onboardingRequired = !completed && canConfigure && !onboardingDeferred
+    }
+    func deferOnboarding() {
+        onboardingDeferred = true
+        onboardingRequired = false
+    }
+    func showOnboarding() {
+        guard !onboardingCompleted, onboardingCanConfigure, settingsReady, !isBusy else { return }
+        onboardingDeferred = false
+        onboardingRequired = true
+    }
+
     func requestQuitBlockingApps(_ enabled: Bool) {
+        guard settingsReady, serviceAvailable else { return }
         if !enabled && quitBlockingApps {
+            guard !isBusy || canCancelSleepPreparation else { return }
             send(.setQuitBlockingApps(false))
         } else if enabled && !quitBlockingApps && !isBusy {
             quitBlockingAppsConfirmation = true
@@ -175,7 +208,7 @@ final class DashboardModel: ObservableObject {
     }
     func cancelQuitBlockingApps() { quitBlockingAppsConfirmation = false }
     func confirmQuitBlockingApps() {
-        guard quitBlockingAppsConfirmation, !isBusy else { return }
+        guard quitBlockingAppsConfirmation, settingsReady, serviceAvailable, !isBusy else { return }
         quitBlockingAppsConfirmation = false
         send(.setQuitBlockingApps(true))
     }
@@ -211,7 +244,7 @@ final class DashboardModel: ObservableObject {
         return edits
     }
     func applyPower() {
-        guard !isBusy, !powerConflict else { return }
+        guard settingsReady, powerPreferencesReady, serviceAvailable, !isBusy, !powerConflict else { return }
         guard let edits = powerEdits(), !edits.isEmpty else {
             powerErrorKey = "power.validation"
             return
@@ -228,6 +261,7 @@ final class DashboardModel: ObservableObject {
         let model = DashboardModel()
         model.language = language
         model.page = page
+        model.updateOnboarding(completed: true)
         model.isEnabled = true
         model.statusKey = "guard.ready"
         model.detailKey = "guard.ready.detail"
@@ -251,7 +285,7 @@ final class DashboardModel: ObservableObject {
             case .setLogin(let enabled): model.loginEnabled = enabled
             case .setQuitBlockingApps(let enabled): model.quitBlockingApps = enabled
             case .setLanguage(let language): model.language = language
-            case .enableProtection: model.onboardingRequired = false; model.isEnabled = true
+            case .enableProtection: model.updateOnboarding(completed: true); model.isEnabled = true
             default: model.feedbackKey = "mock.action"; model.feedbackIsError = false
             }
         }

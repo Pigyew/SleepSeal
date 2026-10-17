@@ -96,9 +96,30 @@ protocol PowerPreferencesAdapter {
     func write(_ value: PowerPreferenceValue, restoring: Bool) throws
 }
 
+enum PowerPreferenceWritePhase: String, Codable {
+    case applying, restoring, rollingBack
+}
+
+struct PendingPowerPreferenceWrite: Codable, Equatable {
+    let previousValue: Int
+    let targetValue: Int
+    let phase: PowerPreferenceWritePhase
+}
+
 struct PowerPreferenceBackup: Codable, Equatable {
     let original: PowerPreferenceValue
+    /// The last value confirmed by readback, never an unconfirmed intention.
     var lastWritten: Int
+    /// Optional so existing array-based backups remain readable. Either side
+    /// may be observed after an interrupted write; a third value is external.
+    var pendingWrite: PendingPowerPreferenceWrite? = nil
+
+    func owns(_ value: Int) -> Bool {
+        if let pendingWrite {
+            return value == pendingWrite.previousValue || value == pendingWrite.targetValue
+        }
+        return value == lastWritten
+    }
 }
 
 protocol PowerPreferencesStore {
@@ -184,7 +205,7 @@ final class PowerPreferencesManager {
                 conflicts.append("\(backup.original.id): this setting is no longer available."); continue
             }
             if current.value == backup.original.value { continue }
-            guard current.value == backup.lastWritten else {
+            guard backup.owns(current.value) else {
                 conflicts.append("\(backup.original.id): changed outside SleepSeal; left unchanged."); continue
             }
             do {
@@ -240,22 +261,14 @@ final class PowerPreferencesManager {
                 guard current.matching(edit.original) == edit.original else {
                     throw PowerPreferencesFailure("Power settings changed while applying. Refresh and try again.")
                 }
-                var next = backups
-                if let index = next.firstIndex(where: { $0.original.id == edit.original.id }) {
-                    next[index].lastWritten = edit.target
-                } else {
-                    next.append(PowerPreferenceBackup(original: edit.original, lastWritten: edit.target))
-                }
-                // Journal the first original and intended value before changing macOS.
-                // An interrupted command leaves enough information for safe recovery.
-                try store.save(next)
-                backups = next
+                try prepare(edit, phase: restoring ? .restoring : .applying)
                 attempted.append(edit)
                 try adapter.write(edit.original.replacingValue(edit.target), restoring: restoring)
                 let verified = try adapter.read()
                 guard verified.matching(edit.original)?.value == edit.target else {
                     throw PowerPreferencesFailure("macOS did not accept \(edit.original.id).")
                 }
+                try commit(edit.original.replacingValue(edit.target))
             }
             return PowerApplyResult(actual: try adapter.read(), errors: [], didRollback: false)
         } catch {
@@ -264,16 +277,23 @@ final class PowerPreferencesManager {
             for edit in attempted.reversed() {
                 do {
                     let observed = try adapter.read().matching(edit.original)
-                    if observed == edit.original { continue }
+                    if observed == edit.original {
+                        try commit(edit.original)
+                        continue
+                    }
                     guard observed?.value == edit.target else {
                         rollbackComplete = false
                         errors.append("\(edit.original.id): changed outside SleepSeal; rollback left it unchanged.")
                         continue
                     }
+                    let rollback = PowerPreferenceEdit(original: edit.original.replacingValue(edit.target),
+                                                       target: edit.original.value)
+                    try prepare(rollback, phase: .rollingBack)
                     try adapter.write(edit.original, restoring: true)
                     guard try adapter.read().matching(edit.original) == edit.original else {
                         throw PowerPreferencesFailure("Rollback verification failed for \(edit.original.id).")
                     }
+                    try commit(edit.original)
                 } catch {
                     rollbackComplete = false
                     errors.append("Rollback: \(error)")
@@ -285,5 +305,31 @@ final class PowerPreferencesManager {
             }
             return PowerApplyResult(actual: try adapter.read(), errors: errors, didRollback: !attempted.isEmpty)
         }
+    }
+
+    private func prepare(_ edit: PowerPreferenceEdit, phase: PowerPreferenceWritePhase) throws {
+        var next = backups
+        let index: Int
+        if let existing = next.firstIndex(where: { $0.original.id == edit.original.id }) {
+            index = existing
+        } else {
+            next.append(PowerPreferenceBackup(original: edit.original, lastWritten: edit.original.value))
+            index = next.count - 1
+        }
+        next[index].pendingWrite = PendingPowerPreferenceWrite(previousValue: edit.original.value,
+            targetValue: edit.target, phase: phase)
+        // Preserve the confirmed value until both the OS write and readback
+        // finish. Rollback uses the same protocol as an ordinary write.
+        try store.save(next)
+        backups = next
+    }
+
+    private func commit(_ value: PowerPreferenceValue) throws {
+        guard let index = backups.firstIndex(where: { $0.original.id == value.id }) else { return }
+        var next = backups
+        next[index].lastWritten = value.value
+        next[index].pendingWrite = nil
+        try store.save(next)
+        backups = next
     }
 }

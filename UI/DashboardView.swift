@@ -132,8 +132,8 @@ struct DashboardView: View {
                         .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 if !model.isEnabled {
-                    Button(model.text("action.enable")) { model.onboardingRequired = true }
-                        .buttonStyle(.borderedProminent).disabled(model.isBusy)
+                    Button(model.text("action.enable")) { model.showOnboarding() }
+                        .buttonStyle(.borderedProminent).disabled(model.isBusy || !model.settingsReady)
                 }
             }
             SealSection(model.text("overview.actual")) {
@@ -202,7 +202,7 @@ struct DashboardView: View {
                 HStack {
                     Spacer()
                     Button(model.text("action.save")) { model.send(.savePolicy(model.policy)) }
-                        .buttonStyle(.borderedProminent).disabled(!model.policyDirty || model.isBusy)
+                        .buttonStyle(.borderedProminent).disabled(!model.policyDirty || model.isBusy || !model.settingsReady)
                 }
             }
             SealSection(model.text("corners.title"), subtitle: model.text("corners.help")) {
@@ -222,7 +222,7 @@ struct DashboardView: View {
                 SealNote(text: model.text("corners.lockNote"))
                 Button(model.text("action.openSettings")) { model.send(.openHotCorners) }
             }
-        }.disabled(model.isBusy)
+        }.disabled(model.isBusy || !model.settingsReady)
     }
     private func triggerBinding(_ trigger: UITrigger) -> Binding<Bool> {
         Binding(get: { model.policy.sources.contains(trigger) }, set: { enabled in
@@ -259,10 +259,10 @@ struct DashboardView: View {
             if model.powerDirty { Text(model.text("power.unsaved")).font(.callout).foregroundStyle(.secondary) }
             HStack {
                 Button(model.text("action.restorePower")) { confirmPowerRestore = true }
-                    .disabled(!model.hasPowerBackup || model.isBusy || model.guardPending)
+                    .disabled(!model.hasPowerBackup || model.isBusy || model.guardPending || !model.powerPreferencesReady)
                 Spacer()
                 Button(model.text("action.apply")) { model.applyPower() }
-                    .buttonStyle(.borderedProminent).disabled(!model.powerDirty || model.isBusy || model.powerConflict)
+                    .buttonStyle(.borderedProminent).disabled(!model.powerDirty || model.isBusy || model.powerConflict || !model.powerPreferencesReady)
             }
             Text(model.text("power.restore.help")).font(.caption).foregroundStyle(.secondary)
         }
@@ -289,7 +289,7 @@ struct DashboardView: View {
                     Label(model.text("power.managed"), systemImage: "lock").foregroundStyle(.secondary)
                 }.accessibilityElement(children: .combine)
             } else { Text(model.text("power.unavailable")).foregroundStyle(.secondary) }
-        }.disabled(model.isBusy)
+        }.disabled(model.isBusy || !model.powerPreferencesReady)
     }
 
     private var diagnostics: some View {
@@ -320,7 +320,7 @@ struct DashboardView: View {
                 SealNote(text: model.text("diagnostics.blockers.help"))
                 Divider()
                 Toggle(model.text("blockers.quit.title"), isOn: Binding(get: { model.quitBlockingApps }, set: { model.requestQuitBlockingApps($0) }))
-                    .disabled(!model.serviceAvailable || (model.isBusy && !model.quitBlockingApps))
+                    .disabled(!model.settingsReady || !model.serviceAvailable || (model.isBusy && !(model.quitBlockingApps && model.canCancelSleepPreparation)))
                     .accessibilityHint(model.text("blockers.quit.help"))
                 Text(model.text(model.quitBlockingApps ? "blockers.quit.enabled" : "blockers.quit.help"))
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -345,11 +345,11 @@ struct DashboardView: View {
             }
             SealSection(model.text("permission.service")) {
                 Toggle(model.text("settings.login"), isOn: Binding(get: { model.loginEnabled }, set: { model.send(.setLogin($0)) }))
-                    .disabled(model.isBusy)
+                    .disabled(model.isBusy || !model.settingsReady)
                 Text(model.text("settings.login.help")).font(.callout).foregroundStyle(.secondary)
                 Divider()
                 Toggle(model.text("settings.pause"), isOn: Binding(get: { model.isPaused }, set: { model.send(.setPaused($0)) }))
-                    .disabled(model.isBusy || !model.isEnabled)
+                    .disabled(model.isBusy || !model.isEnabled || !model.settingsReady)
                 Text(model.text("settings.pause.help")).font(.callout).foregroundStyle(.secondary)
             }
             SealSection(model.text("settings.about")) {
@@ -358,7 +358,12 @@ struct DashboardView: View {
                 Label(model.text("app.beta"), systemImage: "hammer").font(.caption).foregroundStyle(.secondary)
             }
             SealSection(model.text("settings.uninstall"), subtitle: model.text("settings.uninstall.help")) {
-                Button(model.text("action.uninstall"), role: .destructive) { confirmUninstall = true }.disabled(model.isBusy)
+                if model.uninstallCleanupPending {
+                    SealNote(text: model.text("uninstall.cleanup.help"), symbol: "exclamationmark.triangle")
+                    Button(model.text("uninstall.cleanup.retry")) { model.send(.uninstall(restorePower: false)) }.disabled(model.isBusy)
+                } else {
+                    Button(model.text("action.uninstall"), role: .destructive) { confirmUninstall = true }.disabled(model.isBusy || !model.settingsReady)
+                }
             }
         }
     }
@@ -373,7 +378,7 @@ struct DashboardView: View {
             SealNote(text: model.text("onboarding.permission"))
             SealNote(text: model.text("onboarding.note"), symbol: "wifi.slash")
             HStack {
-                Button(model.text("onboarding.later")) { model.onboardingRequired = false }
+                Button(model.text("onboarding.later")) { model.deferOnboarding() }
                 Spacer()
                 Button(model.text("action.enable")) { model.send(.enableProtection) }
                     .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(model.isBusy)
