@@ -1,6 +1,6 @@
 import Foundation
 
-enum SleepSource {
+enum SleepSource: String, Codable {
     case display
     case system
 }
