@@ -12,17 +12,43 @@ struct Snapshot: Codable, Equatable {
     let power: [PowerValue]
 }
 
+/// An observed unlock is evidence, not permission to restore. The console
+/// session must independently become verified before this candidate is used.
+struct UnlockCandidate: Codable, Equatable {
+    let gateID: UUID
+    let observedAt: Date
+}
+
 struct PendingState: Codable, Equatable {
     let snapshot: Snapshot
     var sawLock: Bool
     let id: UUID
     var restorationAuthorized: Bool
+    var unlockCandidate: UnlockCandidate?
 
-    init(snapshot: Snapshot, sawLock: Bool, id: UUID = UUID(), restorationAuthorized: Bool = false) {
+    init(snapshot: Snapshot, sawLock: Bool, id: UUID = UUID(), restorationAuthorized: Bool = false,
+         unlockCandidate: UnlockCandidate? = nil) {
         self.snapshot = snapshot
         self.sawLock = sawLock
         self.id = id
         self.restorationAuthorized = restorationAuthorized
+        self.unlockCandidate = unlockCandidate?.gateID == id ? unlockCandidate : nil
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case snapshot, sawLock, id, restorationAuthorized, unlockCandidate
+    }
+
+    /// Old recovery records remain usable. Missing authorization fields must
+    /// default to the restrictive state; an unrelated candidate is discarded.
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        snapshot = try values.decode(Snapshot.self, forKey: .snapshot)
+        sawLock = try values.decodeIfPresent(Bool.self, forKey: .sawLock) ?? false
+        id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        restorationAuthorized = try values.decodeIfPresent(Bool.self, forKey: .restorationAuthorized) ?? false
+        let candidate = try values.decodeIfPresent(UnlockCandidate.self, forKey: .unlockCandidate)
+        unlockCandidate = candidate?.gateID == id && sawLock ? candidate : nil
     }
 }
 
@@ -70,10 +96,9 @@ final class SleepGuard {
             snapshot = try system.capture()
         }
 
-        // Every new sleep starts a fresh unlock gate, even when recovery from a
-        // previous sleep is pending. Delayed unlocks must match this new ID.
+        // A new sleep invalidates both an old unlock event and authorization,
+        // while preserving the original settings if recovery remains pending.
         let state = PendingState(snapshot: snapshot, sawLock: false)
-        // A durable recovery record must exist before the first system change.
         try store.save(state)
         pending = state
         try system.suppress(snapshot)
@@ -84,30 +109,51 @@ final class SleepGuard {
     }
 
     func didLock() throws {
-        guard var state = pending, !state.sawLock else { return }
+        guard var state = pending else { return }
+        guard !state.sawLock || state.unlockCandidate != nil else { return }
         state.sawLock = true
-        // A failed save must not make an in-memory unlock newly eligible.
+        // A re-lock cancels an unlock that has not yet passed verification.
+        // Already-authorized partial restoration remains retryable, as before.
+        state.unlockCandidate = nil
         try store.save(state)
         pending = state
     }
 
-    func didUnlock(sessionVerified: Bool) throws {
-        guard sessionVerified, pending?.sawLock == true else { return }
-        try authorizeAndRestore()
+    /// Record this once for a real unlock notification. The gate ID is captured
+    /// when the notification arrives, so queued work cannot unlock a new cycle.
+    /// A slow console update is retried by reconcile instead of a short timer.
+    func observedUnlock(gateID: UUID, sessionVerified: Bool, observedAt: Date = Date()) throws {
+        guard var state = pending, state.id == gateID, state.sawLock else { return }
+        if sessionVerified {
+            try authorizeAndRestore()
+        } else if state.unlockCandidate == nil {
+            state.unlockCandidate = UnlockCandidate(gateID: gateID, observedAt: observedAt)
+            try store.save(state)
+            pending = state
+        }
     }
 
-    /// Manual recovery can also restore an interrupted sleep transition that
-    /// never produced a lock event, but still requires a verified console user.
+    /// Compatibility entry point for callers already handling an unlock event.
+    func didUnlock(sessionVerified: Bool) throws {
+        guard let id = pending?.id else { return }
+        try observedUnlock(gateID: id, sessionVerified: sessionVerified)
+    }
+
+    /// Manual recovery can restore an interrupted transition without a lock
+    /// event, but still requires the current, verified console user.
     func recover(sessionVerified: Bool) throws {
         guard sessionVerified else { throw SleepGuardError.sessionNotVerified }
         try authorizeAndRestore()
     }
 
-    /// Retry an authorized, possibly partial restoration while the console is
-    /// verified as unlocked. A locked or unverified session stays suppressed.
+    /// Polling alone never authorizes recovery. A durable, gate-matched unlock
+    /// candidate (or previously authorized partial recovery) must also exist.
     func reconcile(sessionVerified: Bool) throws {
-        if pending?.restorationAuthorized == true && sessionVerified {
+        guard let state = pending else { return }
+        if sessionVerified && state.restorationAuthorized {
             try restorePending()
+        } else if sessionVerified && state.sawLock && state.unlockCandidate?.gateID == state.id {
+            try authorizeAndRestore()
         } else {
             try reassert()
         }
@@ -120,10 +166,9 @@ final class SleepGuard {
 
     private func authorizeAndRestore() throws {
         guard var state = pending else { return }
-        if !state.restorationAuthorized {
+        if !state.restorationAuthorized || state.unlockCandidate != nil {
             state.restorationAuthorized = true
-            // Remember authorization before any restore step so a later timer
-            // retries a partial restoration instead of disabling radios again.
+            state.unlockCandidate = nil
             try store.save(state)
             pending = state
         }

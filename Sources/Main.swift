@@ -62,6 +62,8 @@ final class Watcher: NSObject {
     private var timer: DispatchSourceTimer?
     private var mostRecentFailure: String?
     private var screenLockedObserved = false
+    private var lastReport: String?
+    private var lastReportAt = Date.distantPast
 
     init(engine: SleepGuard) {
         self.engine = engine
@@ -72,7 +74,7 @@ final class Watcher: NSObject {
 
     func perform(_ name: String, _ action: () throws -> Void) {
         do {
-            try action()
+            try OperationBudget.perform { try action() }
             log(name)
             report(success: true, stage: name, message: "完成")
         } catch {
@@ -83,9 +85,12 @@ final class Watcher: NSObject {
     }
 
     func report(success: Bool, stage: String, message: String) {
+        let signature = "\(success)|\(stage)|\(message)|\(String(describing: engine.pending))"
+        if signature == lastReport && Date().timeIntervalSince(lastReportAt) < 60 { return }
+        lastReport = signature; lastReportAt = Date()
         do {
             try writeReport(runtimeReportPath(), success: success, stage: stage, message: message,
-                snapshot: try? MacSystem().capture(), pending: engine.pending, mostRecentFailure: mostRecentFailure)
+                snapshot: nil, pending: engine.pending, mostRecentFailure: mostRecentFailure)
         } catch { log("诊断记录写入失败：\(error)") }
     }
 
@@ -179,10 +184,11 @@ final class Watcher: NSObject {
         queue.async {
             self.screenLockedObserved = false
             guard let gateID = self.engine.pending?.id else { return }
+            self.perform("记录解锁候选") { try self.engine.observedUnlock(gateID: gateID, sessionVerified: ConsoleSession.verified) }
             for delay in [0.15, 0.6, 1.5] {
                 self.queue.asyncAfter(deadline: .now() + delay) {
                     guard self.engine.pending?.id == gateID else { return }
-                    self.perform("检查解锁并恢复") { try self.engine.didUnlock(sessionVerified: ConsoleSession.verified) }
+                    self.perform("检查解锁并恢复") { try self.engine.observedUnlock(gateID: gateID, sessionVerified: ConsoleSession.verified) }
                 }
             }
         }

@@ -9,32 +9,100 @@ struct GuardFailure: Error, CustomStringConvertible {
     init(_ description: String) { self.description = description }
 }
 
-func log(_ message: String) {
-    let line = "\(ISO8601DateFormatter().string(from: Date())) \(message)\n"
-    FileHandle.standardError.write(Data(line.utf8))
+/// Logs contain events and errors, never network names or addresses.
+final class EventLog {
+    static let shared = EventLog()
+    private let lock = NSLock()
+    private var previous: String?
+    private var lastWrite = Date.distantPast
+    private let directory = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Logs/SleepSeal", isDirectory: true)
+    func write(_ message: String) {
+        lock.lock(); defer { lock.unlock() }
+        let now = Date()
+        if previous == message && now.timeIntervalSince(lastWrite) < 60 { return }
+        previous = message; lastWrite = now
+        let data = Data("\(ISO8601DateFormatter().string(from: now)) \(message)\n".utf8)
+        do {
+            let fm = FileManager.default
+            try fm.createDirectory(at: directory, withIntermediateDirectories: true,
+                                   attributes: [.posixPermissions: 0o700])
+            let url = directory.appendingPathComponent("events.log")
+            let size = (try? fm.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue ?? 0
+            if size + data.count > 1_048_576 {
+                let oldest = directory.appendingPathComponent("events.2.log")
+                if fm.fileExists(atPath: oldest.path) { try fm.removeItem(at: oldest) }
+                let previous = directory.appendingPathComponent("events.1.log")
+                if fm.fileExists(atPath: previous.path) { try fm.moveItem(at: previous, to: oldest) }
+                if fm.fileExists(atPath: url.path) { try fm.moveItem(at: url, to: previous) }
+            }
+            if !fm.fileExists(atPath: url.path) { fm.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600]) }
+            let file = try FileHandle(forWritingTo: url)
+            defer { try? file.close() }
+            try file.seekToEnd(); try file.write(contentsOf: data)
+        } catch {
+            // A logging failure must never prevent sleep or restoration.
+        }
+    }
 }
+func log(_ message: String) { EventLog.shared.write(message) }
 
 struct CommandResult { let status: Int32; let output: String }
 
-// No shell is used, and a hung pmset cannot indefinitely delay sleep.
+/// One monotonic deadline is shared by every child process in a transition.
+final class OperationBudget {
+    let deadline: TimeInterval
+    private let lock = NSLock()
+    private var cancelled = false
+    init(seconds: TimeInterval) { deadline = ProcessInfo.processInfo.systemUptime + seconds }
+    func cancel() { lock.lock(); cancelled = true; lock.unlock() }
+    var remaining: TimeInterval {
+        lock.lock(); defer { lock.unlock() }
+        return cancelled ? 0 : max(0, deadline - ProcessInfo.processInfo.systemUptime)
+    }
+    static var current: OperationBudget? { Thread.current.threadDictionary["SleepSeal.operationBudget"] as? OperationBudget }
+    static func perform<T>(seconds: TimeInterval = 15, _ action: () throws -> T) rethrows -> T {
+        let old = current
+        Thread.current.threadDictionary["SleepSeal.operationBudget"] = old ?? OperationBudget(seconds: seconds)
+        defer {
+            if let old { Thread.current.threadDictionary["SleepSeal.operationBudget"] = old }
+            else { Thread.current.threadDictionary.removeObject(forKey: "SleepSeal.operationBudget") }
+        }
+        return try action()
+    }
+}
+
+// Drain output concurrently so even a verbose failed command cannot fill a pipe.
+private final class CommandOutput {
+    let lock = NSLock()
+    var bytes = Data()
+    func append(_ data: Data) { lock.lock(); defer { lock.unlock() }; if bytes.count < 262144 { bytes.append(data.prefix(262144 - bytes.count)) } }
+    var text: String { lock.lock(); defer { lock.unlock() }; return String(decoding: bytes, as: UTF8.self) }
+}
 func command(_ path: String, _ args: [String], timeout: TimeInterval = 2) throws -> CommandResult {
+    let available = min(timeout, OperationBudget.current?.remaining ?? timeout)
+    guard available > 0 else { throw GuardFailure("Operation budget exhausted / 操作已超时") }
     let process = Process()
     process.executableURL = URL(fileURLWithPath: path)
     process.arguments = args
-    let pipe = Pipe()
-    process.standardOutput = pipe
-    process.standardError = pipe
+    let pipe = Pipe(), output = CommandOutput()
+    process.standardOutput = pipe; process.standardError = pipe
+    pipe.fileHandleForReading.readabilityHandler = { output.append($0.availableData) }
+    defer { pipe.fileHandleForReading.readabilityHandler = nil }
     try process.run()
-    let deadline = Date().addingTimeInterval(timeout)
-    while process.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.02) }
+    let deadline = ProcessInfo.processInfo.systemUptime + available
+    while process.isRunning && ProcessInfo.processInfo.systemUptime < deadline && (OperationBudget.current?.remaining ?? 1) > 0 {
+        Thread.sleep(forTimeInterval: 0.02)
+    }
     if process.isRunning {
         process.terminate()
         Thread.sleep(forTimeInterval: 0.05)
         if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-        throw GuardFailure("命令超时：\(path)")
+        throw GuardFailure("Command timed out / 命令超时：\(URL(fileURLWithPath: path).lastPathComponent)")
     }
-    let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-    return CommandResult(status: process.terminationStatus, output: output)
+    pipe.fileHandleForReading.readabilityHandler = nil
+    output.append(pipe.fileHandleForReading.readDataToEndOfFile())
+    return CommandResult(status: process.terminationStatus, output: output.text)
 }
 
 final class JSONStore: GuardStore {
@@ -119,6 +187,7 @@ final class BluetoothControl {
         guard let setter else { throw GuardFailure("蓝牙控制接口不可用") }
         setter(enabled ? 1 : 0)
         for _ in 0..<15 {
+            if let budget = OperationBudget.current, budget.remaining <= 0 { break }
             if read() == enabled { return }
             Thread.sleep(forTimeInterval: 0.1)
         }
